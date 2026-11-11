@@ -1,5 +1,3 @@
-import { KeyRound } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { TITLE_GROUPS } from '@/lib/it/titles'
@@ -19,15 +17,15 @@ export function EmployeeTable({
   employees, loading, actions,
 }: { employees: Employee[]; loading: boolean; actions: RowActions }) {
   return (
-    <Table>
+    <Table className="min-w-[50rem] table-fixed">
       <TableHeader>
         <TableRow>
-          <TableHead>Employee</TableHead>
+          <TableHead className="w-64">Employee</TableHead>
           <TableHead className="w-52">Title</TableHead>
           <TableHead className="w-36">Access</TableHead>
           <TableHead>Manager</TableHead>
           <TableHead className="w-28">Status</TableHead>
-          <TableHead className="w-12"><span className="sr-only">Actions</span></TableHead>
+          <TableHead className="w-28 text-right">Credentials</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -80,13 +78,8 @@ export function EmployeeTable({
               </label>
             </TableCell>
             <TableCell className="text-right">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="icon" variant="ghost" aria-label={`Reset email or password for ${e.name}`}
-                    onClick={() => actions.onResetCredentials(e)}><KeyRound /></Button>
-                </TooltipTrigger>
-                <TooltipContent>Reset email / password</TooltipContent>
-              </Tooltip>
+              <Button size="sm" variant="outline" aria-label={`Reset email or password for ${e.name}`}
+                onClick={() => actions.onResetCredentials(e)}>Reset</Button>
             </TableCell>
           </TableRow>
         ))}
