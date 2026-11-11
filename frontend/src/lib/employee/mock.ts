@@ -119,7 +119,7 @@ function buildStub(payDate: Date): PayStub {
     net: round2(gross - sumDeductions(deductions)),
     earnings,
     deductions,
-    ytd: { gross: 0, deductions: ZERO, net: 0 },
+    ytd: { hours: 0, gross: 0, deductions: ZERO, net: 0 },
     depositAccount: mask(profile.directDeposit.accountNumber),
   }
 }
@@ -129,8 +129,8 @@ function allStubs(): PayStub[] {
   const ytd = new Map<number, PayStub['ytd']>()
   for (const s of stubs) {
     const y = fromISODate(s.payDate).getFullYear()
-    const prev = ytd.get(y) ?? { gross: 0, deductions: ZERO, net: 0 }
-    const next = { gross: round2(prev.gross + s.gross), deductions: addDeductions(prev.deductions, s.deductions), net: round2(prev.net + s.net) }
+    const prev = ytd.get(y) ?? { hours: 0, gross: 0, deductions: ZERO, net: 0 }
+    const next = { hours: prev.hours + s.hours, gross: round2(prev.gross + s.gross), deductions: addDeductions(prev.deductions, s.deductions), net: round2(prev.net + s.net) }
     ytd.set(y, next)
     s.ytd = next
   }

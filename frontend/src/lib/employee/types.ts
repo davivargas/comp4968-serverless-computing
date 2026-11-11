@@ -118,6 +118,6 @@ export interface PayStub extends PayStubSummary {
   position: string
   earnings: PayStubLine[]
   deductions: Deductions
-  ytd: { gross: number; deductions: Deductions; net: number }
+  ytd: { hours: number; gross: number; deductions: Deductions; net: number }
   depositAccount: string // masked
 }
