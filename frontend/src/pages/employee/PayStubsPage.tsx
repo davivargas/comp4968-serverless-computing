@@ -161,9 +161,9 @@ function StubDetail({ stub }: { stub: PayStub }) {
         </DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-3 gap-4 rounded-lg border p-4">
-        <div><div className="text-xs text-muted-foreground">Gross</div><div className="text-lg font-semibold tabular-nums">{formatMoney(stub.gross)}</div></div>
-        <div><div className="text-xs text-muted-foreground">Deductions</div><div className="text-lg font-semibold tabular-nums">{formatMoney(totalDeductions(stub.deductions))}</div></div>
-        <div><div className="text-xs text-muted-foreground">Net pay</div><div className="text-lg font-semibold text-primary tabular-nums">{formatMoney(stub.net)}</div></div>
+        <SummaryFigure label="Gross" value={formatMoney(stub.gross)} ytd={formatMoney(stub.ytd.gross)} />
+        <SummaryFigure label="Deductions" value={formatMoney(totalDeductions(stub.deductions))} ytd={formatMoney(totalDeductions(stub.ytd.deductions))} />
+        <SummaryFigure label="Net pay" value={formatMoney(stub.net)} ytd={formatMoney(stub.ytd.net)} highlight />
       </div>
 
       <Table>
@@ -191,6 +191,12 @@ function StubDetail({ stub }: { stub: PayStub }) {
             <TableCell className="text-right tabular-nums">{formatHours(stub.hours)}</TableCell>
             <TableCell />
             <TableCell className="text-right tabular-nums">{formatMoney(stub.gross)}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell>Year to date</TableCell>
+            <TableCell className="text-right tabular-nums">{formatHours(stub.ytd.hours)}</TableCell>
+            <TableCell />
+            <TableCell className="text-right tabular-nums">{formatMoney(stub.ytd.gross)}</TableCell>
           </TableRow>
         </TableFooter>
       </Table>
@@ -223,5 +229,15 @@ function StubDetail({ stub }: { stub: PayStub }) {
         </TableFooter>
       </Table>
     </>
+  )
+}
+
+function SummaryFigure({ label, value, ytd, highlight }: { label: string; value: string; ytd: string; highlight?: boolean }) {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={highlight ? 'text-lg font-semibold text-primary tabular-nums' : 'text-lg font-semibold tabular-nums'}>{value}</div>
+      <div className="text-xs text-muted-foreground tabular-nums">YTD {ytd}</div>
+    </div>
   )
 }
