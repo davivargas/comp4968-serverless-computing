@@ -36,7 +36,10 @@ export function downloadPayStubPdf(stub: PayStub) {
     startY: 180,
     head: [['Earnings', 'Hours', 'Rate', 'Current']],
     body: stub.earnings.map((e) => [e.projectCode, e.hours.toFixed(2), formatMoney(e.rate), formatMoney(e.amount)]),
-    foot: [['Gross pay', stub.hours.toFixed(2), '', formatMoney(stub.gross)]],
+    foot: [
+      ['Gross pay', stub.hours.toFixed(2), '', formatMoney(stub.gross)],
+      ['Year to date', stub.ytd.hours.toFixed(2), '', formatMoney(stub.ytd.gross)],
+    ],
     headStyles: head,
     footStyles: { fillColor: [245, 245, 245], textColor: 0 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
