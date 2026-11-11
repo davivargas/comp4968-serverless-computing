@@ -25,6 +25,13 @@ type Editing = { date: string; row?: Row } | null
 const EMP = CURRENT_EMPLOYEE_ID
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+/** True when an arrow key on this element already means something (text fields, menus, dialogs, tabs). */
+function isInteractiveTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return true
+  return !!target.closest('[role="dialog"], [role="listbox"], [role="menu"], [role="tablist"], [role="slider"]')
+}
+
 /** Calendar weeks (Mon–Sun) covering the period; days outside it are null. */
 function periodWeeks(period: PayPeriod): (Date | null)[][] {
   const start = fromISODate(period.start)
@@ -99,6 +106,30 @@ export default function TimesheetsPage() {
     setPendingDeletes(new Set())
     setPeriodDate(date)
   }
+
+  const canGoPrev = !!period && !loading
+  const canGoNext = !!period && !loading && !period.isCurrent
+  const goPrev = () => period && goTo(toISODate(addDays(fromISODate(period.start), -1)))
+  const goNext = () => period && goTo(toISODate(addDays(fromISODate(period.end), 1)))
+
+  // ← / → step through pay periods, except while typing, in a dialog or menu, or with a modifier held.
+  // No dependency list on purpose: it re-subscribes each render so the handler never sees stale state.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+      if (editing || confirmSubmit || isInteractiveTarget(e.target)) return
+      if (e.key === 'ArrowLeft' && canGoPrev) {
+        e.preventDefault()
+        goPrev()
+      } else if (e.key === 'ArrowRight' && canGoNext) {
+        e.preventDefault()
+        goNext()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
 
   const removeRow = (row: Row) => {
     if (row.saved) setPendingDeletes((s) => new Set(s).add(row.saved!.timesheetId))
@@ -178,15 +209,20 @@ export default function TimesheetsPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="icon" aria-label="Previous pay period" disabled={loading}
-            onClick={() => goTo(toISODate(addDays(fromISODate(period.start), -1)))}>
+          <Button variant="outline" size="icon" aria-label="Previous pay period" aria-keyshortcuts="ArrowLeft"
+            title="Previous pay period (←)" disabled={!canGoPrev} onClick={goPrev}>
             <ChevronLeft />
           </Button>
-          <Button variant="outline" size="icon" aria-label="Next pay period" disabled={loading || period.isCurrent}
-            onClick={() => goTo(toISODate(addDays(fromISODate(period.end), 1)))}>
+          <Button variant="outline" size="icon" aria-label="Next pay period" aria-keyshortcuts="ArrowRight"
+            title="Next pay period (→)" disabled={!canGoNext} onClick={goNext}>
             <ChevronRight />
           </Button>
           <Button variant="ghost" disabled={period.isCurrent} onClick={() => goTo(undefined)}>Current period</Button>
+          <span className="hidden items-center gap-1 text-xs text-muted-foreground lg:flex" aria-hidden>
+            <kbd className="rounded border bg-muted px-1.5 font-sans">←</kbd>
+            <kbd className="rounded border bg-muted px-1.5 font-sans">→</kbd>
+            to switch periods
+          </span>
         </div>
         <div>
           <div className="font-medium">{periodLabel}</div>
