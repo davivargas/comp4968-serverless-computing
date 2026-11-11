@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/employee/api'
 
 const NAV = [
@@ -30,9 +31,9 @@ export default function EmployeeLayout() {
               <SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild>
                   <Link to="/employee">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">TP</div>
+                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">{APP_NAME[0]}</div>
                     <div className="grid leading-tight">
-                      <span className="font-semibold">Timesheet Pro</span>
+                      <span className="font-semibold">{APP_NAME}</span>
                       <span className="text-xs text-muted-foreground">Employee portal</span>
                     </div>
                   </Link>
