@@ -1,6 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
+import DashboardITPage from '@/pages/it/DashboardPage'
+import ITLayout from '@/pages/it/ITLayout'
+import UsersPage from '@/pages/it/UsersPage'
 import PortalPlaceholder from '@/pages/PortalPlaceholder'
 import DashboardPage from '@/pages/employee/DashboardPage'
 import EmployeeLayout from '@/pages/employee/EmployeeLayout'
@@ -14,7 +17,11 @@ export default function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login/:portalId" element={<LoginPage />} />
-        <Route path="/it" element={<PortalPlaceholder name="IT Admin" />} />
+        <Route path="/it" element={<ITLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardITPage />} />
+          <Route path="users" element={<UsersPage />} />
+        </Route>
         <Route path="/employee" element={<EmployeeLayout />}>
           <Route index element={<Navigate to="timesheets" replace />} />
           <Route path="timesheets" element={<TimesheetsPage />} />
