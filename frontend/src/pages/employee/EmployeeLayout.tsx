@@ -1,4 +1,5 @@
 import { CalendarClock, FileText, LayoutDashboard, LogOut, UserRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -9,7 +10,8 @@ import {
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { APP_NAME } from '@/lib/brand'
-import { usingMockApi } from '@/lib/employee/api'
+import { employeeApi, usingMockApi } from '@/lib/employee/api'
+import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 
 const NAV = [
   { to: '/employee/timesheets', label: 'Timesheets', icon: CalendarClock },
@@ -21,6 +23,11 @@ const NAV = [
 export default function EmployeeLayout() {
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
+  const [firstName, setFirstName] = useState<string | null>(null)
+
+  useEffect(() => {
+    employeeApi.getProfile(CURRENT_EMPLOYEE_ID).then((p) => setFirstName(p.firstName)).catch(() => {})
+  }, [])
 
   return (
     <TooltipProvider>
@@ -78,7 +85,8 @@ export default function EmployeeLayout() {
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="text-sm font-medium">{current?.label}</span>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-3">
+              {firstName && <span className="text-sm">Hi, <span className="font-medium">{firstName}</span></span>}
               {usingMockApi && <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">Mock API</span>}
               <ModeToggle />
             </div>
