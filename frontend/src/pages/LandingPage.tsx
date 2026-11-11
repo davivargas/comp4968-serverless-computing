@@ -1,12 +1,14 @@
 import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { ModeToggle } from '@/components/mode-toggle'
 import { PORTALS } from '@/lib/portals'
 
 export default function LandingPage() {
   return (
     <div className="flex min-h-svh flex-col">
-      <header className="mx-auto w-full max-w-4xl px-6 pt-8">
+      <header className="mx-auto flex w-full max-w-4xl items-center justify-between px-6 pt-8">
         <div className="font-semibold">Timesheet Pro</div>
+        <ModeToggle />
       </header>
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-6 py-12">
         <h1 className="text-4xl font-semibold tracking-tight">Sign in to your portal</h1>
