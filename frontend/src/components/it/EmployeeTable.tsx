@@ -20,7 +20,7 @@ export function EmployeeTable({
     <Table className="min-w-[50rem] table-fixed">
       <TableHeader>
         <TableRow>
-          <TableHead className="w-64">Employee</TableHead>
+          <TableHead className="w-80">Employee</TableHead>
           <TableHead className="w-52">Title</TableHead>
           <TableHead className="w-36">Access</TableHead>
           <TableHead>Manager</TableHead>
