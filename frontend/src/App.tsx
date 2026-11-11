@@ -15,6 +15,7 @@ import PayrollDashboardPage from '@/pages/payroll_admin/DashboardPage'
 import EmployeeDirectoryPage from '@/pages/payroll_admin/EmployeeDirectoryPage'
 import EmployeeRecordsPage from '@/pages/payroll_admin/EmployeeRecordsPage'
 import PayrollReleasesPage from '@/pages/payroll_admin/PayrollReleasesPage'
+import PayrollAuditPage from '@/pages/payroll_admin/PayrollAuditPage'
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="records" element={<EmployeeRecordsPage />} />
           <Route path="records/:id" element={<EmployeeRecordsPage />} />
           <Route path="releases" element={<PayrollReleasesPage />} />
+          <Route path="audit" element={<PayrollAuditPage />} />
         </Route>
         <Route path="*" element={<LandingPage />} />
       </Routes>
