@@ -111,7 +111,7 @@ Pay dates are fixed on the 1st and 15th. The 15th pays the 1st–15th; the 1st p
   "hours": 88, "gross": 3740.00, "net": 2839.03,
   "earnings": [ { "projectCode": "PRJ-100", "hours": 44, "rate": 42.5, "amount": 1870.00 } ],
   "deductions": { "federalTax": 448.80, "provincialTax": 168.30, "cpp": 222.53, "ei": 61.34 },
-  "ytd": { "gross": 74290.00, "deductions": { "federalTax": 8914.80, "provincialTax": 3343.05, "cpp": 4420.29, "ei": 1218.38 }, "net": 56393.48 },
+  "ytd": { "hours": 1748, "gross": 74290.00, "deductions": { "federalTax": 8914.80, "provincialTax": 3343.05, "cpp": 4420.29, "ei": 1218.38 }, "net": 56393.48 },
   "depositAccount": "***4567"
 }
 ```
@@ -164,5 +164,5 @@ DirectDeposit  = { institutionNumber, transitNumber, accountNumber }
 EmployeeProfile = { employeeId, firstName, lastName, email, position, payGrade, hourlyRate, phone, address: Address, directDeposit: DirectDeposit }
 PayStub        = { payDate, periodStart, periodEnd, hours, gross, net, employeeId, employeeName, position,
                    earnings: [{ projectCode, hours, rate, amount }], deductions: Deductions,
-                   ytd: { gross, deductions: Deductions, net }, depositAccount }
+                   ytd: { hours, gross, deductions: Deductions, net }, depositAccount }
 ```
