@@ -125,7 +125,7 @@ The PDF is generated in the browser from this JSON, so the backend doesn't need 
 ```json
 {
   "employeeId": "E1001", "firstName": "Alex", "lastName": "Morgan", "email": "alex.morgan@example.com",
-  "position": "Software Developer", "payGrade": "P2", "hourlyRate": 42.5, "phone": "604-555-0142",
+  "position": "Software Developer", "payGrade": "P2", "hourlyRate": 42.5, "phone": "+16045550142",
   "address": { "street": "3700 Willingdon Ave", "city": "Burnaby", "province": "BC", "postalCode": "V5G 3H2", "country": "Canada" },
   "directDeposit": { "institutionNumber": "004", "transitNumber": "12345", "accountNumber": "***4567" }
 }
@@ -133,9 +133,10 @@ The PDF is generated in the browser from this JSON, so the backend doesn't need 
 Never return the full account number; mask it.
 
 `PATCH /employee/{id}/profile`: send only the sections that changed. Leave out `directDeposit.accountNumber` to keep the current account.
-`phone` is always sent as a 10-digit Canadian/US number in the form `604-555-0142` (the UI validates and normalizes it; the backend should reject anything else with `400`).
+`phone` is always sent and returned in E.164 form, `+1` followed by the 10 digits: `+16045550142`.
+The UI validates it (Canadian/US numbers only) and only formats it as `(604) 555-0142` for display. The backend should store it as-is and reject anything that isn't `^\+1[2-9]\d{2}[2-9]\d{6}$` with `400`. This is also the format Cognito's `phone_number` attribute expects.
 ```json
-{ "phone": "604-555-0199" }
+{ "phone": "+16045550199" }
 { "address": { "street": "…", "city": "…", "province": "BC", "postalCode": "V5G 3H2", "country": "Canada" } }
 { "directDeposit": { "institutionNumber": "004", "transitNumber": "12345", "accountNumber": "9876543" } }
 ```
