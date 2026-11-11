@@ -22,7 +22,7 @@ const DEFAULT_PROFILE: EmployeeProfile = {
   position: 'Software Developer',
   payGrade: 'P2',
   hourlyRate: 42.5,
-  phone: '604-555-0142',
+  phone: '+16045550142',
   address: { street: '3700 Willingdon Ave', city: 'Burnaby', province: 'BC', postalCode: 'V5G 3H2', country: 'Canada' },
   directDeposit: { institutionNumber: '004', transitNumber: '12345', accountNumber: '1234567' },
 }
