@@ -32,23 +32,24 @@ Conventions
 ### Pay period (the edit lock)
 
 Employees can only change time in the **current pay period**. The backend owns this rule, and the UI just follows it.
-Periods are semi-monthly: 1st–15th (paid on the 15th) and 16th–end of month (paid on the 1st).
+Periods are **bi-weekly**: 14 days, and they don't line up with calendar months, so the frontend can't work them out itself.
+It always asks the backend which period a date falls in and whether that period is still open.
 
-`GET /employee/{id}/pay-period`: the current period. `?date=2026-10-20` returns the period containing that date (the UI uses this for prev/next).
+`GET /employee/{id}/pay-period`: the current period. `?date=2026-10-30` returns the period containing that date (the UI uses this for prev/next).
 ```json
-{ "start": "2026-11-01", "end": "2026-11-15", "payDate": "2026-11-15", "isCurrent": true, "editable": true }
+{ "start": "2026-11-09", "end": "2026-11-22", "payDate": "2026-11-27", "isCurrent": true, "editable": true }
 ```
 - `editable` is the lock. The UI hides Log time, Save and Submit when it's false.
 - The backend must enforce it too: `POST`, `DELETE` and `submit` for dates outside an editable period return `409`.
 - The UI never asks for a period after the current one.
-- Keeping `editable` separate from `isCurrent` lets payroll later add a grace window (e.g. allow edits to the previous period until the 2nd) without changing the frontend.
+- Keeping `editable` separate from `isCurrent` lets payroll later add a grace window (e.g. allow edits to the previous period until its pay date) without changing the frontend.
 
 ### Timesheets
 
 Table row: `timesheetId` (PK), `employeeId`, `date`, `startTime`, `endTime`, `projectCode`, `submitted`, `approved`.
 Hours are derived from start/end. The UI blocks overlapping entries on the same day, and the backend should too.
 
-`GET /employee/{id}/timesheets?from=2026-11-01&to=2026-11-15`
+`GET /employee/{id}/timesheets?from=2026-11-09&to=2026-11-22`
 ```json
 { "entries": [
   { "timesheetId": "7f3c…", "employeeId": "E1001", "date": "2026-11-09", "startTime": "09:00", "endTime": "17:00",
@@ -69,7 +70,7 @@ Add `PUT /employee/{id}/timesheets/{timesheetId}` later if you want real edits.
 
 `PATCH /employee/{id}/timesheets/submit`: the **Submit pay period** button. Sets `submitted = true` on every row in the range.
 ```json
-{ "from": "2026-11-01", "to": "2026-11-15" }
+{ "from": "2026-11-09", "to": "2026-11-22" }
 ```
 → `200 { "entries": [ …rows in range ] }`
 
@@ -95,19 +96,20 @@ Add `PUT /employee/{id}/timesheets/{timesheetId}` later if you want real edits.
 
 ### Pay stubs
 
-Pay dates are fixed on the 1st and 15th. The 15th pays the 1st–15th; the 1st pays the 16th–end of the previous month.
+Pay dates follow the backend's bi-weekly schedule; each stub covers one 14-day pay period.
+The frontend fills its From/To dropdowns from this list, so it never assumes which dates are pay dates.
 
-`GET /employee/{id}/pay-stubs?from=2026-05-15&to=2026-11-01` → newest first
+`GET /employee/{id}/pay-stubs?from=2026-05-29&to=2026-11-13` → newest first
 ```json
-{ "payStubs": [ { "payDate": "2026-11-01", "periodStart": "2026-10-16", "periodEnd": "2026-10-31",
+{ "payStubs": [ { "payDate": "2026-11-13", "periodStart": "2026-10-26", "periodEnd": "2026-11-08",
                   "hours": 88, "gross": 3740.00, "net": 2839.03 } ] }
 ```
 
-`GET /employee/{id}/pay-stubs/2026-11-01`
+`GET /employee/{id}/pay-stubs/2026-11-13`
 ```json
 {
   "employeeId": "E1001", "employeeName": "Alex Morgan", "position": "Software Developer",
-  "payDate": "2026-11-01", "periodStart": "2026-10-16", "periodEnd": "2026-10-31",
+  "payDate": "2026-11-13", "periodStart": "2026-10-26", "periodEnd": "2026-11-08",
   "hours": 88, "gross": 3740.00, "net": 2839.03,
   "earnings": [ { "projectCode": "PRJ-100", "hours": 44, "rate": 42.5, "amount": 1870.00 } ],
   "deductions": { "federalTax": 448.80, "provincialTax": 168.30, "cpp": 222.53, "ei": 61.34 },
@@ -150,7 +152,7 @@ Never return the full account number; mask it.
 | `PATCH /employee/{id}/timesheets/submit` | body `{ from, to }` | `{ entries: TimesheetEntry[] }` | Sets `submitted = true` for the pay period |
 | `GET /employee/{id}/aggregate-pay` | query `year`, `granularity` = `ytd` \| `quarterly` \| `monthly` | `{ employeeId, year, granularity, periods: [{ label, start, end, hours, gross, deductions, net }] }` | Pay totals for the dashboard and pie chart |
 | `GET /employee/{id}/pay-stubs` | query `from`, `to` (pay dates) | `{ payStubs: [{ payDate, periodStart, periodEnd, hours, gross, net }] }` | Pay stub list, newest first |
-| `GET /employee/{id}/pay-stubs/{payDate}` | path `payDate` (1st or 15th) | `PayStub` (summary + `employeeName`, `position`, `earnings[]`, `deductions`, `ytd`, `depositAccount`) | One stub; the PDF is built from this JSON |
+| `GET /employee/{id}/pay-stubs/{payDate}` | path `payDate` (a pay date from the list) | `PayStub` (summary + `employeeName`, `position`, `earnings[]`, `deductions`, `ytd`, `depositAccount`) | One stub; the PDF is built from this JSON |
 | `GET /employee/{id}/profile` | none | `EmployeeProfile` (account number masked) | Name, position, phone, address, direct deposit |
 | `PATCH /employee/{id}/profile` | body any of `{ phone?, address?, directDeposit? }` | `EmployeeProfile` | Update contact or banking info; omit `accountNumber` to keep it |
 
