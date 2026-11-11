@@ -5,7 +5,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { Employee, ResetCredentialsInput } from '@/lib/types'
+import type { Employee, ResetCredentialsInput } from '@/lib/it/types'
 
 export function ResetCredentialsDialog({
   employee, onClose, onSubmit,

@@ -5,7 +5,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { roleLabel, type Employee, type Role } from '@/lib/types'
+import { roleLabel, type Employee, type Role } from '@/lib/it/types'
 
 export interface PendingRoleChange { employee: Employee; role: Role }
 

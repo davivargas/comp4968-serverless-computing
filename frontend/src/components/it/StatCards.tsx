@@ -1,4 +1,4 @@
-import type { Employee } from '@/lib/types'
+import type { Employee } from '@/lib/it/types'
 
 export function StatCards({ employees }: { employees: Employee[] }) {
   const active = employees.filter((e) => e.active).length

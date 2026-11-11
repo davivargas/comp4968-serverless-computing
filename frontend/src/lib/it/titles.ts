@@ -11,7 +11,7 @@ export const TITLE_GROUPS: TitleGroup[] = [
     ],
   },
   { track: 'Management', titles: ['Engineering Manager', 'Senior Engineering Manager', 'Director of Engineering'] },
-  { track: 'IT', titles: ['IT Administrator'] },
+  { track: 'Operations', titles: ['IT Administrator', 'Payroll Specialist'] },
 ]
 
 export const DEFAULT_TITLE = 'Software Engineer 1'

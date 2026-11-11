@@ -8,8 +8,8 @@ import { Label } from '@/components/ui/label'
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { TITLE_GROUPS, DEFAULT_TITLE } from '@/lib/titles'
-import { ROLES, type CreateAccountInput, type Employee, type Role } from '@/lib/types'
+import { TITLE_GROUPS, DEFAULT_TITLE } from '@/lib/it/titles'
+import { ROLES, type CreateAccountInput, type Employee, type Role } from '@/lib/it/types'
 
 const NO_MANAGER = 'none'
 

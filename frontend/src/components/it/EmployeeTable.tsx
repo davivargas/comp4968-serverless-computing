@@ -1,9 +1,10 @@
+import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { TITLE_GROUPS } from '@/lib/titles'
+import { TITLE_GROUPS } from '@/lib/it/titles'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ROLES, type Employee, type Role } from '@/lib/types'
+import { ROLES, type Employee, type Role } from '@/lib/it/types'
 
 export interface RowActions {
   onChangeTitle: (e: Employee, title: string) => void
@@ -31,7 +32,9 @@ export function EmployeeTable({
       </TableHeader>
       <TableBody>
         {loading ? (
-          <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+          Array.from({ length: 5 }, (_, i) => (
+            <TableRow key={i}><TableCell colSpan={8}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+          ))
         ) : employees.length === 0 ? (
           <TableRow><TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No employees found.</TableCell></TableRow>
         ) : employees.map((e) => (
