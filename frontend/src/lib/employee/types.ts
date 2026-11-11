@@ -25,7 +25,7 @@ export interface TimesheetEntry {
 export type NewTimesheetEntry = Pick<TimesheetEntry, 'date' | 'startTime' | 'endTime' | 'projectCode'>
 
 /**
- * A semi-monthly pay period (1st–15th or 16th–end of month), as decided by the backend.
+ * A bi-weekly pay period (14 days), as decided by the backend. The frontend never computes period dates.
  * `editable` is the lock: only an editable period accepts new, changed or deleted time.
  */
 export interface PayPeriod {
@@ -97,7 +97,7 @@ export interface AggregatePay {
 }
 
 export interface PayStubSummary {
-  payDate: ISODate // always the 1st or the 15th
+  payDate: ISODate // set by the backend's bi-weekly schedule
   periodStart: ISODate
   periodEnd: ISODate
   hours: number

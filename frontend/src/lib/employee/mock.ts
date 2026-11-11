@@ -75,25 +75,47 @@ const addDeductions = (a: Deductions, b: Deductions): Deductions => ({
 })
 const ZERO: Deductions = { federalTax: 0, provincialTax: 0, cpp: 0, ei: 0 }
 
-/** Semi-monthly: paid on the 15th for the 1st–15th, and on the 1st for the 16th–end of the previous month. */
-function periodFor(payDate: Date) {
-  if (payDate.getDate() === 15) return { start: new Date(payDate.getFullYear(), payDate.getMonth(), 1), end: payDate }
-  const end = addDays(payDate, -1)
-  return { start: new Date(end.getFullYear(), end.getMonth(), 16), end }
+// ---- pay periods (the real backend owns this schedule and the edit lock) -----
+
+/** Bi-weekly: 14 days, Monday to the Sunday two weeks later, paid on the Friday after. */
+const PERIOD_ANCHOR = new Date(2025, 0, 6) // a Monday that starts a period
+const PERIOD_DAYS = 14
+const PAY_DELAY_DAYS = 5 // Sunday period end -> Friday pay date
+
+interface MockPeriod {
+  start: Date
+  end: Date
+  payDate: Date
 }
 
-function allPayDates(): Date[] {
+function payPeriodContaining(d: Date): MockPeriod {
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const daysSinceAnchor = Math.round((day.getTime() - PERIOD_ANCHOR.getTime()) / 86_400_000)
+  const start = addDays(PERIOD_ANCHOR, Math.floor(daysSinceAnchor / PERIOD_DAYS) * PERIOD_DAYS)
+  const end = addDays(start, PERIOD_DAYS - 1)
+  return { start, end, payDate: addDays(end, PAY_DELAY_DAYS) }
+}
+
+/** Every period already paid (pay date on or before today), oldest first. */
+function paidPeriods(): MockPeriod[] {
   const today = new Date()
-  const dates: Date[] = []
-  for (let d = new Date(2025, 0, 1); d <= today; ) {
-    dates.push(d)
-    d = d.getDate() === 1 ? new Date(d.getFullYear(), d.getMonth(), 15) : new Date(d.getFullYear(), d.getMonth() + 1, 1)
-  }
-  return dates
+  const periods: MockPeriod[] = []
+  for (let p = payPeriodContaining(PERIOD_ANCHOR); p.payDate <= today; p = payPeriodContaining(addDays(p.end, 1))) periods.push(p)
+  return periods
 }
 
-function buildStub(payDate: Date): PayStub {
-  const { start, end } = periodFor(payDate)
+function payPeriodInfo(d: Date): PayPeriod {
+  const p = payPeriodContaining(d)
+  const isCurrent = p.start.getTime() === payPeriodContaining(new Date()).start.getTime()
+  return { start: toISODate(p.start), end: toISODate(p.end), payDate: toISODate(p.payDate), isCurrent, editable: isCurrent }
+}
+
+const isEditableDate = (date: ISODate) => payPeriodInfo(fromISODate(date)).editable
+const lockedError = (date: ISODate) => new Error(`${date} is outside the open pay period`)
+
+// ---- pay stubs --------------------------------------------------------------
+
+function buildStub({ start, end, payDate }: MockPeriod): PayStub {
   let weekdays = 0
   for (let d = start; d <= end; d = addDays(d, 1)) if (d.getDay() % 6 !== 0) weekdays++
   const seed = payDate.getMonth() * 31 + payDate.getDate() + payDate.getFullYear()
@@ -125,7 +147,7 @@ function buildStub(payDate: Date): PayStub {
 }
 
 function allStubs(): PayStub[] {
-  const stubs = allPayDates().map(buildStub)
+  const stubs = paidPeriods().map(buildStub)
   const ytd = new Map<number, PayStub['ytd']>()
   for (const s of stubs) {
     const y = fromISODate(s.payDate).getFullYear()
@@ -138,25 +160,6 @@ function allStubs(): PayStub[] {
 }
 
 const summary = ({ payDate, periodStart, periodEnd, hours, gross, net }: PayStub): PayStubSummary => ({ payDate, periodStart, periodEnd, hours, gross, net })
-
-// ---- pay periods (the backend owns the lock) ---------------------------------
-
-function payPeriodContaining(d: Date) {
-  const y = d.getFullYear()
-  const m = d.getMonth()
-  return d.getDate() <= 15
-    ? { start: new Date(y, m, 1), end: new Date(y, m, 15), payDate: new Date(y, m, 15) }
-    : { start: new Date(y, m, 16), end: new Date(y, m + 1, 0), payDate: new Date(y, m + 1, 1) }
-}
-
-function payPeriodInfo(d: Date): PayPeriod {
-  const p = payPeriodContaining(d)
-  const isCurrent = p.start.getTime() === payPeriodContaining(new Date()).start.getTime()
-  return { start: toISODate(p.start), end: toISODate(p.end), payDate: toISODate(p.payDate), isCurrent, editable: isCurrent }
-}
-
-const isEditableDate = (date: ISODate) => payPeriodInfo(fromISODate(date)).editable
-const lockedError = (date: ISODate) => new Error(`${date} is outside the open pay period`)
 
 // ---- api --------------------------------------------------------------------
 
