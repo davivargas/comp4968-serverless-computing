@@ -5,6 +5,7 @@ export interface PayrollEmployee {
   position: string
   positionId: string
   team: string
+  project: string
   managerName: string | null
   status: 'active' | 'inactive'
   startDate: string
@@ -44,6 +45,8 @@ export interface PayPeriod {
 export interface EmployeeFilters {
   position?: string
   team?: string
+  project?: string
+  status?: 'active' | 'inactive'
   from?: string
   to?: string
   search?: string

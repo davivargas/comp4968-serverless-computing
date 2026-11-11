@@ -27,7 +27,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const send = (method: string, body: unknown) => ({ method, body: JSON.stringify(body) })
 
 const httpApi: PayrollAdminApi = {
-  listEmployees: (filters) => request<{ employees: PayrollEmployee[] }>(`${PA_BASE_PATH}/employees${qs({ position: filters?.position, team: filters?.team, from: filters?.from, to: filters?.to, search: filters?.search })}`).then((r) => r.employees),
+  listEmployees: (filters) => request<{ employees: PayrollEmployee[] }>(`${PA_BASE_PATH}/employees${qs({ position: filters?.position, team: filters?.team, project: filters?.project, status: filters?.status, from: filters?.from, to: filters?.to, search: filters?.search })}`).then((r) => r.employees),
   getEmployee: (id) => request<EmployeeRecord>(`${PA_BASE_PATH}/employees/${id}`),
   listPositions: () => request<{ positions: Position[] }>(`${PA_BASE_PATH}/positions`).then((r) => r.positions),
   createPosition: (input) => request(`${PA_BASE_PATH}/positions`, send('POST', input)),

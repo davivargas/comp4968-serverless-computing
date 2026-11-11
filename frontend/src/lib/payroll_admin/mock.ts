@@ -12,10 +12,11 @@ const positions: Position[] = [
 ]
 const names = ['Kevin Romero', 'Dominic Cheung', 'Victor Lum', 'Balpreet Sekhon', 'Mason Young', 'Alex Morgan', 'Alice Johnson', 'Carol Lee', 'Eve Park', 'Priya Shah']
 const teams = ['Engineering', 'Quality', 'Operations', 'People']
+const projects = ['Payroll Platform', 'Mobile App', 'Data Warehouse', 'Internal Operations']
 let employees: PayrollEmployee[] = Array.from({ length: 48 }, (_, index) => {
   const position = positions[index % positions.length]
   const name = names[index % names.length]
-  return { id: `EMP-${String(index + 1).padStart(3, '0')}`, name, email: `${name.toLowerCase().replaceAll(' ', '.')}@example.com`, position: position.title, positionId: position.positionId, team: teams[index % teams.length], managerName: index % 5 === 4 ? null : 'Mason Young', status: index === 8 ? 'inactive' : 'active', startDate: `202${index % 4 + 3}-0${index % 8 + 1}-15`, hourlyRate: position.hourlyRate }
+  return { id: `EMP-${String(index + 1).padStart(3, '0')}`, name, email: `${name.toLowerCase().replaceAll(' ', '.')}@example.com`, position: position.title, positionId: position.positionId, team: teams[index % teams.length], project: projects[index % projects.length], managerName: index % 5 === 4 ? null : 'Mason Young', status: index === 8 ? 'inactive' : 'active', startDate: `202${index % 4 + 3}-0${index % 8 + 1}-15`, hourlyRate: position.hourlyRate }
 })
 let periods: PayPeriod[] = [
   { payPeriodId: 'PP-2026-22', start: '2026-11-02', end: '2026-11-15', payDate: '2026-11-20', status: 'OPEN', unapprovedCount: 6, employeeCount: 48, canRelease: false, releasedAt: null },
@@ -26,7 +27,7 @@ let periods: PayPeriod[] = [
 const load = () => { try { const raw = localStorage.getItem(KEY); if (raw) periods = JSON.parse(raw) as PayPeriod[] } catch { /* use seed */ } }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(periods)) } catch { /* memory fallback */ } }
 load()
-const filter = (list: PayrollEmployee[], f: EmployeeFilters = {}) => list.filter((e) => (!f.position || e.positionId === f.position) && (!f.team || e.team === f.team) && (!f.search || `${e.id} ${e.name} ${e.email} ${e.position}`.toLowerCase().includes(f.search.toLowerCase())))
+const filter = (list: PayrollEmployee[], f: EmployeeFilters = {}) => list.filter((e) => (!f.position || e.positionId === f.position) && (!f.team || e.team === f.team) && (!f.project || e.project === f.project) && (!f.status || e.status === f.status) && (!f.search || `${e.id} ${e.name} ${e.email} ${e.position} ${e.project}`.toLowerCase().includes(f.search.toLowerCase())))
 
 export const mockApi: PayrollAdminApi = {
   listEmployees: (f) => delay(filter(employees, f)),
