@@ -133,6 +133,7 @@ The PDF is generated in the browser from this JSON, so the backend doesn't need 
 Never return the full account number; mask it.
 
 `PATCH /employee/{id}/profile`: send only the sections that changed. Leave out `directDeposit.accountNumber` to keep the current account.
+`phone` is always sent as a 10-digit Canadian/US number in the form `604-555-0142` (the UI validates and normalizes it; the backend should reject anything else with `400`).
 ```json
 { "phone": "604-555-0199" }
 { "address": { "street": "…", "city": "…", "province": "BC", "postalCode": "V5G 3H2", "country": "Canada" } }
