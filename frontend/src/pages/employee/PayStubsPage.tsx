@@ -1,5 +1,5 @@
 import { Download, Eye } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import PageHeader from '@/components/PageHeader'
@@ -17,34 +17,39 @@ import { DEDUCTION_LABELS, totalDeductions } from '@/lib/employee/pay'
 import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { Deductions, PayStub, PayStubSummary } from '@/lib/employee/types'
 
-/** Fixed pay dates (1st and 15th) from Jan 1 last year up to today, newest first. */
-function payDateOptions() {
-  const today = new Date()
-  const out: string[] = []
-  for (let y = today.getFullYear() - 1; y <= today.getFullYear(); y++)
-    for (let m = 0; m < 12; m++)
-      for (const d of [1, 15]) {
-        const date = new Date(y, m, d)
-        if (date <= today) out.push(toISODate(date))
-      }
-  return out.reverse()
-}
+/** How far back the date dropdowns reach. */
+const HISTORY_START = toISODate(new Date(new Date().getFullYear() - 1, 0, 1))
+const DEFAULT_RANGE = 12 // pay periods shown at first (about six months, bi-weekly)
 
 export default function PayStubsPage() {
-  const options = useMemo(payDateOptions, [])
   const [params, setParams] = useSearchParams()
-  const [from, setFrom] = useState(options[Math.min(11, options.length - 1)])
-  const [to, setTo] = useState(options[0])
+  // Pay dates come from the backend's schedule, so the dropdowns list real pay dates only.
+  const [options, setOptions] = useState<string[] | null>(null)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [stubs, setStubs] = useState<PayStubSummary[] | null>(null)
   const [viewing, setViewing] = useState<PayStub | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
 
   useEffect(() => {
+    employeeApi
+      .getPayStubs(CURRENT_EMPLOYEE_ID, HISTORY_START, toISODate(new Date()))
+      .then((all) => {
+        const dates = all.map((s) => s.payDate) // newest first
+        setOptions(dates)
+        setTo(dates[0] ?? '')
+        setFrom(dates[Math.min(DEFAULT_RANGE, dates.length) - 1] ?? '')
+      })
+      .catch((e) => toast.error(`Couldn't load pay dates: ${e.message}`))
+  }, [])
+
+  useEffect(() => {
+    if (!from || !to) return
     setStubs(null)
     employeeApi.getPayStubs(CURRENT_EMPLOYEE_ID, from, to).then(setStubs).catch((e) => toast.error(`Couldn't load pay stubs: ${e.message}`))
   }, [from, to])
 
-  // Deep link from the dashboard: /employee/paystubs?view=2026-11-01
+  // Deep link from the dashboard: /employee/paystubs?view=<payDate>
   const viewParam = params.get('view')
   useEffect(() => {
     if (!viewParam) return
@@ -73,16 +78,16 @@ export default function PayStubsPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title="Pay stubs" description="View and download your pay statements. Pay dates fall on the 1st and 15th." />
+      <PageHeader title="Pay stubs" description="View and download your pay statements. You are paid every two weeks." />
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="grid gap-1.5">
           <Label htmlFor="from" className="text-xs text-muted-foreground">From pay date</Label>
-          <DateSelect id="from" options={options} value={from} onChange={setFrom} disable={(d) => d > to} />
+          <DateSelect id="from" options={options ?? []} value={from} onChange={setFrom} disable={(d) => d > to} />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="to" className="text-xs text-muted-foreground">To pay date</Label>
-          <DateSelect id="to" options={options} value={to} onChange={setTo} disable={(d) => d < from} />
+          <DateSelect id="to" options={options ?? []} value={to} onChange={setTo} disable={(d) => d < from} />
         </div>
       </div>
 
