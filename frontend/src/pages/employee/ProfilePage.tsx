@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { employeeApi } from '@/lib/employee/api'
+import { formatPhone, phoneDigits, toStoredPhone, validatePhone } from '@/lib/employee/phone'
 import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { Address, EmployeeProfile, ProfileUpdate } from '@/lib/employee/types'
 
@@ -19,13 +20,15 @@ type Section = 'phone' | 'address' | 'deposit'
 export default function ProfilePage() {
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [phone, setPhone] = useState('')
+  const [phoneTouched, setPhoneTouched] = useState(false)
   const [address, setAddress] = useState<Address | null>(null)
   const [deposit, setDeposit] = useState({ institutionNumber: '', transitNumber: '', accountNumber: '' })
   const [saving, setSaving] = useState<Section | null>(null)
 
   const reset = (p: EmployeeProfile) => {
     setProfile(p)
-    setPhone(p.phone)
+    setPhone(formatPhone(p.phone))
+    setPhoneTouched(false)
     setAddress(p.address)
     // Account number comes back masked; the field stays blank unless the user enters a new one.
     setDeposit({ institutionNumber: p.directDeposit.institutionNumber, transitNumber: p.directDeposit.transitNumber, accountNumber: '' })
@@ -57,7 +60,10 @@ export default function ProfilePage() {
     )
   }
 
-  const phoneValid = /^\+?[\d\s().-]{10,}$/.test(phone)
+  const phoneError = validatePhone(phone)
+  const phoneChanged = phoneDigits(phone) !== phoneDigits(profile.phone)
+  // Only nag once they've left the field (or tried to save), not on every keystroke.
+  const showPhoneError = phoneTouched && phoneChanged && !!phoneError
   const postalValid = address.country !== 'Canada' || /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/.test(address.postalCode)
   const addressValid = address.street.trim() && address.city.trim() && postalValid
   const depositErrors = [
@@ -86,15 +92,35 @@ export default function ProfilePage() {
       <SectionCard
         icon={<Phone />}
         title="Phone number"
-        onSave={() => save('phone', { phone })}
+        onSave={() => (phoneError ? setPhoneTouched(true) : save('phone', { phone: toStoredPhone(phone) }))}
         saving={saving === 'phone'}
-        canSave={phoneValid && phone !== profile.phone}
-        onCancel={() => setPhone(profile.phone)}
+        canSave={phoneChanged && !phoneError}
+        onCancel={() => {
+          setPhone(formatPhone(profile.phone))
+          setPhoneTouched(false)
+        }}
       >
         <Field label="Phone" id="phone">
-          <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} aria-invalid={!phoneValid} />
+          <Input
+            id="phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel-national"
+            placeholder="(604) 555-0142"
+            maxLength={20}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            onBlur={() => {
+              setPhoneTouched(true)
+              if (!validatePhone(phone)) setPhone(formatPhone(phone))
+            }}
+            aria-invalid={showPhoneError}
+            aria-describedby="phone-help"
+          />
         </Field>
-        {!phoneValid && <p className="text-sm text-destructive">Enter a valid phone number.</p>}
+        <p id="phone-help" className={showPhoneError ? 'text-sm text-destructive' : 'text-xs text-muted-foreground'}>
+          {showPhoneError ? phoneError : 'Canadian or US number, 10 digits. For example (604) 555-0142.'}
+        </p>
       </SectionCard>
 
       <SectionCard
