@@ -34,8 +34,5 @@ export const formatPhone = (input: string) => {
   return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : input
 }
 
-/** 604-555-0142, the format sent to and stored by the backend. */
-export const toStoredPhone = (input: string) => {
-  const d = phoneDigits(input)
-  return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`
-}
+/** +16045550142 (E.164), the format sent to and stored by the backend. Cognito's phone_number uses it too. */
+export const toStoredPhone = (input: string) => `+1${phoneDigits(input)}`
