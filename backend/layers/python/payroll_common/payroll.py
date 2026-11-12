@@ -4,6 +4,7 @@ from collections import defaultdict
 from fractions import Fraction
 from zoneinfo import ZoneInfo
 
+from . import rates as R
 from .db import one, query
 from .http_utils import HttpError
 
@@ -103,3 +104,25 @@ def allocate_days(daily_minutes, period_start):
         week_first8[w] += first8
         out[d] = (reg, ot1 + (first8 - reg), dot)
     return out
+
+
+def cpp_ei(gross_c, ytd_gross_c, ytd_cpp_c, ytd_ei_c, rates):
+    c, e = rates["cpp"], rates["ei"]
+    before, after = ytd_gross_c, ytd_gross_c + gross_c
+    ympe, yampe, mie = c["ympe"] * 100, c["yampe"] * 100, e["mie"] * 100
+    band1 = max(0, min(after, ympe) - min(before, ympe))
+    exempt = half_up(Fraction(c["basic_exemption"] * 100, R.PERIODS_PER_YEAR))
+    cpp1 = half_up(max(0, band1 - exempt) * F(c["rate"])) if band1 > 0 else 0
+    cpp1 = min(cpp1, max(0, cents(c["max1"]) - ytd_cpp_c))
+    cpp2 = half_up(max(0, min(after, yampe) - max(before, ympe)) * F(c["rate2"]))
+    band_ei = max(0, min(after, mie) - min(before, mie))
+    ei = min(half_up(band_ei * F(e["rate"])), max(0, cents(e["max"]) - ytd_ei_c))
+    return cpp1, cpp2, ei
+
+
+def _bracket(a, brackets):
+    chosen = brackets[0]
+    for b in brackets:
+        if a >= b[0]:
+            chosen = b
+    return F(chosen[1]), F(chosen[2])
