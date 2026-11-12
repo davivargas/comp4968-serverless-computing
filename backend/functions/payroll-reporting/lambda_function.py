@@ -47,3 +47,16 @@ def list_employees(event, ctx):
     if pid is not None:
         where.append("EXISTS (SELECT 1 FROM project_assignment pa WHERE pa.employee_id = e.employee_id AND pa.project_id = %s)")
         params.append(pid)
+    limit, offset = paging(q)
+    order = order_by(q, {"id": "e.employee_id", "name": "e.last_name, e.first_name", "position": "p.title", "team": "t.name",
+                         "gross": "a.gross", "hours": "a.hours"}, "name")
+    rows = query(get_conn(), f"""
+        SELECT e.employee_id, e.first_name, e.last_name, e.status, p.position_id, p.title AS position, t.team_id, t.name AS team,
+               a.hours, a.gross, a.deductions, a.net, COUNT(*) OVER()::int AS total_count
+          FROM employee e JOIN position p ON p.position_id = e.position_id LEFT JOIN team t ON t.team_id = e.team_id
+          LEFT JOIN LATERAL ({AGG} WHERE ps.employee_id = e.employee_id AND {pf_sql}) a ON true
+         {'WHERE ' + ' AND '.join(where) if where else ''} {order} LIMIT %s OFFSET %s""", params + [limit, offset])
+    return {"total": rows[0]["total_count"] if rows else 0, "aggregationPeriod": label, "limit": limit, "offset": offset,
+            "employees": [{"employeeId": r["employee_id"], "firstName": r["first_name"], "lastName": r["last_name"], "status": r["status"],
+                           "positionId": r["position_id"], "position": r["position"], "teamId": r["team_id"], "team": r["team"],
+                           "hours": r["hours"], "gross": r["gross"], "deductions": r["deductions"], "net": r["net"]} for r in rows]}
