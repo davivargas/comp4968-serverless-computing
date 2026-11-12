@@ -113,3 +113,37 @@ CREATE TABLE pay_period (
   released_at   TIMESTAMPTZ,
   CHECK (end_date = start_date + 13)
 );
+
+CREATE TABLE paystub (
+  paystub_id            INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  employee_id           INT NOT NULL REFERENCES employee(employee_id),
+  pay_period_id         INT NOT NULL REFERENCES pay_period(pay_period_id),
+  employee_name         VARCHAR(210) NOT NULL,
+  position_title        VARCHAR(100) NOT NULL,
+  deposit_account_last4 CHAR(4),
+  hourly_rate           NUMERIC(10,2) NOT NULL,
+  regular_hours         NUMERIC(8,2) NOT NULL,
+  overtime_hours        NUMERIC(8,2) NOT NULL,
+  double_overtime_hours NUMERIC(8,2) NOT NULL,
+  regular_pay           NUMERIC(12,2) NOT NULL,
+  overtime_pay          NUMERIC(12,2) NOT NULL,
+  double_overtime_pay   NUMERIC(12,2) NOT NULL,
+  vacation_pay          NUMERIC(12,2) NOT NULL,
+  gross_pay             NUMERIC(12,2) NOT NULL,
+  cpp                   NUMERIC(12,2) NOT NULL,
+  ei                    NUMERIC(12,2) NOT NULL,
+  federal_tax           NUMERIC(12,2) NOT NULL,
+  provincial_tax        NUMERIC(12,2) NOT NULL,
+  total_deductions      NUMERIC(12,2) NOT NULL,
+  net_pay               NUMERIC(12,2) NOT NULL,
+  ytd_hours             NUMERIC(10,2) NOT NULL,
+  ytd_gross             NUMERIC(12,2) NOT NULL,
+  ytd_cpp               NUMERIC(12,2) NOT NULL,
+  ytd_ei                NUMERIC(12,2) NOT NULL,
+  ytd_federal_tax       NUMERIC(12,2) NOT NULL,
+  ytd_provincial_tax    NUMERIC(12,2) NOT NULL,
+  ytd_net               NUMERIC(12,2) NOT NULL,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (employee_id, pay_period_id)
+);
+CREATE INDEX paystub_period_idx ON paystub(pay_period_id);
