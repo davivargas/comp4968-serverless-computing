@@ -1,3 +1,4 @@
+import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import { CURRENT_MANAGER } from './session'
 import type { ManagedEmployee, ManagerProject, ManagerTimesheet, PeriodInput, ProjectEmployees, ProjectInput, ProjectUpdate, TimesheetList, TimesheetQuery } from './types'
@@ -17,8 +18,7 @@ export interface ManagerApi {
 const BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
-    method, headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'MANAGER' },
-    // TODO: attach the Cognito token once sign-in is connected.
+    method, headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'MANAGER', ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`)
