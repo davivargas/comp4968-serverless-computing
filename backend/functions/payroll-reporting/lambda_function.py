@@ -5,6 +5,8 @@ from payroll_common.payroll import today_bc
 from payroll_common.shapes import WAGE_JOIN
 from payroll_common.validate import address_json, bad, one_of, opt_date, opt_int, order_by, paging, path_id
 
+PA = ["PAYROLL_ADMIN"]
+
 
 def _period_filter(q):
     pay_date, frm, to = opt_date(q.get("payDate"), "payDate"), opt_date(q.get("fromPayDate"), "fromPayDate"), opt_date(q.get("toPayDate"), "toPayDate")
@@ -81,3 +83,20 @@ def get_employee(event, ctx):
                                    ps.gross_pay, ps.total_deductions, ps.net_pay
                               FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
                              WHERE ps.employee_id = %s AND {pf_sql} ORDER BY pp.pay_date DESC""", [emp_id] + pf_params)
+    return {
+        "employee": {"employeeId": e["employee_id"], "firstName": e["first_name"], "lastName": e["last_name"], "email": e["email"],
+                     "phone": e["phone"], "address": address_json(e), "status": e["status"], "hireDate": e["hire_date"],
+                     "position": e["position"], "payGrade": e["pay_grade"], "hourlyRate": e["hourly_wage"], "teamId": e["team_id"],
+                     "team": e["team"], "managerId": e["manager_id"], "managerName": e["manager_name"],
+                     "depositAccountLast4": e["account_last4"]},
+        "aggregationPeriod": label,
+        "aggregate": {"hours": agg["hours"], "gross": agg["gross"], "deductions": agg["deductions"], "net": agg["net"]},
+        "payStubs": [{"payDate": s["pay_date"], "periodStart": s["start_date"], "periodEnd": s["end_date"], "hours": s["hours"],
+                      "gross": s["gross_pay"], "deductions": s["total_deductions"], "net": s["net_pay"]} for s in stubs],
+    }
+
+
+lambda_handler = router({
+    "GET /pa/employees": with_auth(PA, list_employees),
+    "GET /pa/employees/{id}": with_auth(PA, get_employee),
+})
