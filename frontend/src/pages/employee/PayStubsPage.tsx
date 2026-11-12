@@ -2,7 +2,9 @@ import { Download, Eye } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useEmployeeId } from '@/components/auth/session-context'
 import PageHeader from '@/components/PageHeader'
+import LoadError from '@/components/LoadError'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -14,7 +16,6 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { employeeApi } from '@/lib/employee/api'
 import { formatDate, formatHours, formatMoney, toISODate } from '@/lib/employee/dates'
 import { DEDUCTION_LABELS, totalDeductions } from '@/lib/employee/pay'
-import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { Deductions, PayStub, PayStubSummary } from '@/lib/employee/types'
 
 /** How far back the date dropdowns reach. */
@@ -22,6 +23,7 @@ const HISTORY_START = toISODate(new Date(new Date().getFullYear() - 1, 0, 1))
 const DEFAULT_RANGE = 12 // pay periods shown at first (about six months, bi-weekly)
 
 export default function PayStubsPage() {
+  const employeeId = useEmployeeId()
   const [params, setParams] = useSearchParams()
   // Pay dates come from the backend's schedule, so the dropdowns list real pay dates only.
   const [options, setOptions] = useState<string[] | null>(null)
@@ -30,31 +32,33 @@ export default function PayStubsPage() {
   const [stubs, setStubs] = useState<PayStubSummary[] | null>(null)
   const [viewing, setViewing] = useState<PayStub | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0) // bumped by "Try again" to re-run the loads
 
   useEffect(() => {
     employeeApi
-      .getPayStubs(CURRENT_EMPLOYEE_ID, HISTORY_START, toISODate(new Date()))
+      .getPayStubs(employeeId, HISTORY_START, toISODate(new Date()))
       .then((all) => {
         const dates = all.map((s) => s.payDate) // newest first
         setOptions(dates)
         setTo(dates[0] ?? '')
         setFrom(dates[Math.min(DEFAULT_RANGE, dates.length) - 1] ?? '')
       })
-      .catch((e) => toast.error(`Couldn't load pay dates: ${e.message}`))
-  }, [])
+      .catch((e: Error) => setLoadError(e.message))
+  }, [employeeId, attempt])
 
   useEffect(() => {
     if (!from || !to) return
     setStubs(null)
-    employeeApi.getPayStubs(CURRENT_EMPLOYEE_ID, from, to).then(setStubs).catch((e) => toast.error(`Couldn't load pay stubs: ${e.message}`))
-  }, [from, to])
+    employeeApi.getPayStubs(employeeId, from, to).then(setStubs).catch((e: Error) => setLoadError(e.message))
+  }, [employeeId, from, to, attempt])
 
   // Deep link from the dashboard: /employee/paystubs?view=<payDate>
   const viewParam = params.get('view')
   useEffect(() => {
     if (!viewParam) return
-    employeeApi.getPayStub(CURRENT_EMPLOYEE_ID, viewParam).then(setViewing).catch((e) => toast.error(e.message))
-  }, [viewParam])
+    employeeApi.getPayStub(employeeId, viewParam).then(setViewing).catch((e) => toast.error(e.message))
+  }, [employeeId, viewParam])
 
   const closeView = () => {
     setViewing(null)
@@ -66,7 +70,7 @@ export default function PayStubsPage() {
     try {
       const [{ downloadPayStubPdf }, stub] = await Promise.all([
         import('@/lib/employee/paystub-pdf'),
-        viewing?.payDate === payDate ? viewing : employeeApi.getPayStub(CURRENT_EMPLOYEE_ID, payDate),
+        viewing?.payDate === payDate ? viewing : employeeApi.getPayStub(employeeId, payDate),
       ])
       downloadPayStubPdf(stub)
     } catch (e) {
@@ -80,56 +84,69 @@ export default function PayStubsPage() {
     <div className="mx-auto max-w-5xl">
       <PageHeader title="Pay stubs" description="View and download your pay statements. You are paid every two weeks." />
 
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor="from" className="text-xs text-muted-foreground">From pay date</Label>
-          <DateSelect id="from" options={options ?? []} value={from} onChange={setFrom} disable={(d) => d > to} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="to" className="text-xs text-muted-foreground">To pay date</Label>
-          <DateSelect id="to" options={options ?? []} value={to} onChange={setTo} disable={(d) => d < from} />
-        </div>
-      </div>
+      {loadError ? (
+        <LoadError
+          title="Couldn't load your pay stubs"
+          message={loadError}
+          onRetry={() => {
+            setLoadError(null)
+            setAttempt((n) => n + 1)
+          }}
+        />
+      ) : (
+        <>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="from" className="text-xs text-muted-foreground">From pay date</Label>
+              <DateSelect id="from" options={options ?? []} value={from} onChange={setFrom} disable={(d) => d > to} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="to" className="text-xs text-muted-foreground">To pay date</Label>
+              <DateSelect id="to" options={options ?? []} value={to} onChange={setTo} disable={(d) => d < from} />
+            </div>
+          </div>
 
-      <Card>
-        <CardContent>
-          {!stubs ? (
-            <div className="grid gap-2">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
-          ) : stubs.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No pay stubs in this range.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Pay date</TableHead>
-                  <TableHead>Pay period</TableHead>
-                  <TableHead className="text-right">Hours</TableHead>
-                  <TableHead className="text-right">Gross</TableHead>
-                  <TableHead className="text-right">Net</TableHead>
-                  <TableHead className="w-0" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stubs.map((s) => (
-                  <TableRow key={s.payDate}>
-                    <TableCell className="font-medium">{formatDate(s.payDate)}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(s.periodStart, { month: 'short', day: 'numeric' })} – {formatDate(s.periodEnd, { month: 'short', day: 'numeric' })}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatHours(s.hours)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(s.gross)}</TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{formatMoney(s.net)}</TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => setParams({ view: s.payDate })}><Eye />View</Button>
-                        <Button variant="outline" size="sm" disabled={downloading === s.payDate} onClick={() => download(s.payDate)}><Download />PDF</Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardContent>
+              {!stubs ? (
+                <div className="grid gap-2">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
+              ) : stubs.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No pay stubs in this range.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Pay date</TableHead>
+                      <TableHead>Pay period</TableHead>
+                      <TableHead className="text-right">Hours</TableHead>
+                      <TableHead className="text-right">Gross</TableHead>
+                      <TableHead className="text-right">Net</TableHead>
+                      <TableHead className="w-0" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stubs.map((s) => (
+                      <TableRow key={s.payDate}>
+                        <TableCell className="font-medium">{formatDate(s.payDate)}</TableCell>
+                        <TableCell className="text-muted-foreground">{formatDate(s.periodStart, { month: 'short', day: 'numeric' })} – {formatDate(s.periodEnd, { month: 'short', day: 'numeric' })}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatHours(s.hours)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(s.gross)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">{formatMoney(s.net)}</TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => setParams({ view: s.payDate })}><Eye />View</Button>
+                            <Button variant="outline" size="sm" disabled={downloading === s.payDate} onClick={() => download(s.payDate)}><Download />PDF</Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && closeView()}>
         <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
