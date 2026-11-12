@@ -6,11 +6,39 @@ from payroll_common import payroll as payroll
 from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
-from payroll_common.http_utils import HttpError, created, no_content, parse_body, router
+from payroll_common.http_utils import HttpError, created, no_content, parse_body, router, qs
 from payroll_common.validate import bad, path_id, require_bool_true, require_date, require_str
 
 
 PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
+
+# ---- pay periods ---------------------------------------------------------------------------------------------
+
+def list_periods(event, request_context):
+    """GET /pa/pay-periods?limit=&offset=  - canRelease drives the Release button."""
+    today = payroll.today_bc()
+    limit, offset = payroll.paging(qs(event), 26, 100)
+    with transaction() as connection:
+        payroll.ensure_periods(connection, today)
+    pay_period_rows = query(get_conn(), """
+        SELECT pay_period.pay_period_id, pay_period.start_date, pay_period.end_date, pay_period.pay_date,
+               pay_period.status, pay_period.released_at,
+               (SELECT COUNT(*) FROM timesheet_entry WHERE NOT timesheet_entry.is_deleted
+                   AND timesheet_entry.work_date BETWEEN pay_period.start_date AND pay_period.end_date
+                   AND NOT timesheet_entry.approved)::int AS unapproved_count,
+               (SELECT COUNT(DISTINCT timesheet_entry.employee_id) FROM timesheet_entry
+                   WHERE NOT timesheet_entry.is_deleted
+                   AND timesheet_entry.work_date BETWEEN pay_period.start_date AND pay_period.end_date)::int AS employee_count
+          FROM pay_period WHERE pay_period.start_date <= %s
+          ORDER BY pay_period.start_date DESC LIMIT %s OFFSET %s""", (today, limit, offset))
+    return {"payPeriods": [{
+        "payPeriodId": pay_period_row["pay_period_id"], "start": pay_period_row["start_date"],
+        "end": pay_period_row["end_date"], "payDate": pay_period_row["pay_date"],
+        "status": pay_period_row["status"], "unapprovedCount": pay_period_row["unapproved_count"],
+        "employeeCount": pay_period_row["employee_count"],
+        "canRelease": pay_period_row["status"] == "OPEN" and pay_period_row["end_date"] < today
+                      and pay_period_row["unapproved_count"] == 0 and pay_period_row["employee_count"] > 0,
+        "releasedAt": pay_period_row["released_at"]} for pay_period_row in pay_period_rows]}
 
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
@@ -132,6 +160,7 @@ def update_position(event, request_context):
 
 
 lambda_handler = router({
+    "GET /pa/pay-periods": with_auth(PAYROLL_ADMIN_ROLES, list_periods),
     "GET /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, list_positions),
     "POST /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, create_position),
     "PATCH /pa/positions/{id}": with_auth(PAYROLL_ADMIN_ROLES, update_position),
