@@ -147,3 +147,15 @@ CREATE TABLE paystub (
   UNIQUE (employee_id, pay_period_id)
 );
 CREATE INDEX paystub_period_idx ON paystub(pay_period_id);
+
+CREATE TABLE paystub_earning (
+  earning_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  paystub_id   INT NOT NULL REFERENCES paystub(paystub_id),
+  line_type    VARCHAR(20) NOT NULL CHECK (line_type IN ('PROJECT','OVERTIME_PREMIUM','VACATION')),
+  project_id   INT REFERENCES project(project_id),
+  project_code INT,
+  hours        NUMERIC(8,2) NOT NULL,
+  rate         NUMERIC(10,2) NOT NULL,
+  amount       NUMERIC(12,2) NOT NULL
+);
+CREATE INDEX paystub_earning_stub_idx ON paystub_earning(paystub_id);
