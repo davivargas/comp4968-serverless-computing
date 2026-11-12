@@ -1,5 +1,6 @@
 import datetime
 import os
+from collections import defaultdict
 from fractions import Fraction
 from zoneinfo import ZoneInfo
 
@@ -76,3 +77,29 @@ def wage_for(wages, d):
         else:
             break
     return chosen if chosen is not None else wages[0][1]
+
+
+def load_wages(conn, position_ids):
+    out = defaultdict(list)
+    if not position_ids:
+        return out
+    rows = query(conn, "SELECT position_id, effective_from, hourly_wage FROM position_wage WHERE position_id = ANY(%s) "
+                       "ORDER BY position_id, effective_from", (list(position_ids),))
+    for r in rows:
+        out[r["position_id"]].append((r["effective_from"], r["hourly_wage"]))
+    return out
+
+
+def allocate_days(daily_minutes, period_start):
+    out, week_first8 = {}, defaultdict(int)
+    for d in sorted(daily_minutes):
+        m = daily_minutes[d]
+        first8 = min(m, 480)
+        ot1 = min(max(m - 480, 0), 240)
+        dot = max(m - 720, 0)
+        w = (d - period_start).days // 7
+        room = max(0, 2400 - week_first8[w])
+        reg = min(first8, room)
+        week_first8[w] += first8
+        out[d] = (reg, ot1 + (first8 - reg), dot)
+    return out
