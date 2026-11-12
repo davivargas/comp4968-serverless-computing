@@ -59,3 +59,19 @@ def require_time(v, name):
     if not isinstance(v, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?", v):
         bad(f"{name} must be a time (HH:MM)")
     return datetime.time.fromisoformat(v if len(v) > 5 else v + ":00")
+
+
+def one_of(v, name, options):
+    if v not in options:
+        bad(f"{name} must be one of: {', '.join(options)}")
+    return v
+
+
+def require_bool_true(v, name):
+    if v is not True:
+        bad(f"{name} only accepts true")
+    return True
+
+
+def path_id(event, name="id"):
+    return require_int((event.get("pathParameters") or {}).get(name), name)
