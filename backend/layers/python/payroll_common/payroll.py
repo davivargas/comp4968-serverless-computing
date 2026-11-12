@@ -8,7 +8,6 @@ from . import rates as R
 from .db import one, query
 from .http_utils import HttpError
 
-
 ZERO = Fraction(0)
 
 
@@ -235,3 +234,12 @@ def rates_for(year):
     if not r:
         raise HttpError(500, f"No statutory CPP/EI/tax rates configured for {year}. Add them to rates.py before releasing payroll.")
     return r
+
+
+def mask(last4):
+    return "****" + last4 if last4 else None
+
+
+def deductions_json(r, prefix=""):
+    return {"federalTax": r[prefix + "federal_tax"], "provincialTax": r[prefix + "provincial_tax"],
+            "cpp": r[prefix + "cpp"], "ei": r[prefix + "ei"]}
