@@ -155,3 +155,46 @@ def income_tax(gross_c, cpp1_c, cpp2_c, ei_c, rates):
         s = ZERO
     t2 = max(ZERO, t4 - s)
     return half_up(t3 * 100 / P), half_up(t2 * 100 / P)
+
+
+def calculate_paystub(entries, period_start, vacation_rate, ytd, rates):
+    daily = defaultdict(int)
+    for e in entries:
+        daily[e["date"]] += e["minutes"]
+    alloc = allocate_days(daily, period_start)
+    rate_c = {}
+    for e in entries:
+        rate_c[e["date"]] = cents(e["rate"])
+
+    tiers = defaultdict(lambda: [0, 0, 0])
+    for d, (a, b, c_) in alloc.items():
+        t = tiers[rate_c[d]]
+        t[0] += a
+        t[1] += b
+        t[2] += c_
+    reg_c = ot_c = dot_c = 0
+    lines = []
+    for rc, (rm, om, dm) in sorted(tiers.items()):
+        reg_c += half_up(Fraction(rm * rc, 60))
+        ot_c += half_up(Fraction(om * rc * 3, 120))
+        dot_c += half_up(Fraction(dm * rc * 2, 60))
+        ot_base, dot_base = half_up(Fraction(om * rc, 60)), half_up(Fraction(dm * rc, 60))
+        by_project = defaultdict(int)
+        for e in entries:
+            if rate_c[e["date"]] == rc:
+                by_project[(e["project_id"], e["project_code"])] += e["minutes"]
+        target = half_up(Fraction(rm * rc, 60)) + ot_base + dot_base
+        amounts = {k: half_up(Fraction(m * rc, 60)) for k, m in by_project.items()}
+        biggest = max(by_project, key=lambda k: by_project[k])
+        amounts[biggest] += target - sum(amounts.values())
+        for (pid, pcode), m in sorted(by_project.items(), key=lambda kv: kv[0][1]):
+            lines.append({"line_type": "PROJECT", "project_id": pid, "project_code": pcode,
+                          "hours": dollars(half_up(Fraction(m, 60) * 100)), "rate": dollars(rc), "amount": dollars(amounts[(pid, pcode)])})
+        if om:
+            lines.append({"line_type": "OVERTIME_PREMIUM", "project_id": None, "project_code": None,
+                          "hours": dollars(half_up(Fraction(om, 60) * 100)), "rate": dollars(half_up(Fraction(rc, 2))),
+                          "amount": dollars(half_up(Fraction(om * rc * 3, 120)) - ot_base)})
+        if dm:
+            lines.append({"line_type": "OVERTIME_PREMIUM", "project_id": None, "project_code": None,
+                          "hours": dollars(half_up(Fraction(dm, 60) * 100)), "rate": dollars(rc),
+                          "amount": dollars(half_up(Fraction(dm * rc * 2, 60)) - dot_base)})
