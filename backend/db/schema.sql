@@ -62,3 +62,13 @@ CREATE TABLE direct_deposit (
   account_last4  CHAR(4) NOT NULL,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE project (
+  project_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  project_code INT NOT NULL UNIQUE,
+  name         VARCHAR(200) NOT NULL,
+  status       VARCHAR(10) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CLOSED')),
+  is_deleted   BOOLEAN NOT NULL DEFAULT false,
+  created_by   INT NOT NULL REFERENCES employee(employee_id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
