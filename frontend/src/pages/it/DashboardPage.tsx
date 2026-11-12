@@ -1,5 +1,5 @@
 import { ChevronRight, UserPlus, Users } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CreateAccountDialog } from '@/components/it/CreateAccountDialog'
 import { StatCards } from '@/components/it/StatCards'
@@ -9,18 +9,36 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { itApi } from '@/lib/it/api'
-import { roleLabel } from '@/lib/it/types'
-import { useEmployees } from '@/lib/it/useEmployees'
+import { runAction, usePositions, useTeams } from '@/lib/it/hooks'
+import { fullName, roleLabel, type User } from '@/lib/it/types'
 
 export default function DashboardPage() {
-  const { employees, loading, run } = useEmployees()
+  const positions = usePositions().items
+  const teams = useTeams().items
+  const [counts, setCounts] = useState<{ total: number; active: number; deactivated: number } | null>(null)
+  const [recent, setRecent] = useState<User[] | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const recent = employees.slice(-5).reverse()
+
+  const load = useCallback(async () => {
+    try {
+      // limit 1: we only need each list's total
+      const [all, active, deactivated, latest] = await Promise.all([
+        itApi.listUsers({ limit: 1 }),
+        itApi.listUsers({ status: 'ACTIVE', limit: 1 }),
+        itApi.listUsers({ status: 'DEACTIVATED', limit: 1 }),
+        itApi.listUsers({ sort: 'id', order: 'desc', limit: 5 }),
+      ])
+      setCounts({ total: all.total, active: active.total, deactivated: deactivated.total })
+      setRecent(latest.users)
+    } catch { /* the Users page reports load errors; keep skeletons here */ }
+  }, [])
+
+  useEffect(() => { load() }, [load])
 
   return (
     <div className="mx-auto grid max-w-6xl gap-6">
       <PageHeader title="Dashboard" description="Manage user accounts, roles, and system access." />
-      {loading ? <Skeleton className="h-24" /> : <StatCards employees={employees} />}
+      {counts ? <StatCards {...counts} /> : <Skeleton className="h-24" />}
       <div className="grid gap-6 xl:grid-cols-[1fr_20rem]">
         <Card>
           <CardHeader>
@@ -28,15 +46,15 @@ export default function DashboardPage() {
             <CardDescription>The latest accounts created.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
-            {loading
+            {!recent
               ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)
-              : recent.map((e) => (
-                <div key={e.id} className="flex items-center justify-between text-sm">
+              : recent.map((u) => (
+                <div key={u.employeeId} className="flex items-center justify-between text-sm">
                   <div>
-                    <div className="font-medium">{e.name}</div>
-                    <div className="text-xs text-muted-foreground">{e.id} · {e.title}</div>
+                    <div className="font-medium">{fullName(u)}</div>
+                    <div className="text-xs text-muted-foreground">{u.employeeId} · {u.position}</div>
                   </div>
-                  <Badge variant="secondary">{roleLabel(e.role)}</Badge>
+                  <Badge variant="secondary">{roleLabel(u.role)}</Badge>
                 </div>
               ))}
           </CardContent>
@@ -53,8 +71,8 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-      <CreateAccountDialog open={createOpen} onOpenChange={setCreateOpen} employees={employees}
-        onSubmit={(input) => run(() => itApi.createAccount(input), 'Account created')} />
+      <CreateAccountDialog open={createOpen} onOpenChange={setCreateOpen} positions={positions} teams={teams}
+        onSubmit={(input) => runAction(() => itApi.createAccount(input), 'Account created', load)} />
     </div>
   )
 }

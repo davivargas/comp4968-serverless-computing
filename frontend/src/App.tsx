@@ -3,6 +3,7 @@ import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
 import DashboardITPage from '@/pages/it/DashboardPage'
 import ITLayout from '@/pages/it/ITLayout'
+import TeamsPage from '@/pages/it/TeamsPage'
 import UsersPage from '@/pages/it/UsersPage'
 import PortalPlaceholder from '@/pages/PortalPlaceholder'
 import DashboardPage from '@/pages/employee/DashboardPage'
@@ -27,6 +28,7 @@ export default function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardITPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="teams" element={<TeamsPage />} />
         </Route>
         <Route path="/employee" element={<EmployeeLayout />}>
           <Route index element={<Navigate to="timesheets" replace />} />

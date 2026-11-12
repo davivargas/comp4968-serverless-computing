@@ -1,4 +1,4 @@
-import { LayoutDashboard, LogOut, Users } from 'lucide-react'
+import { LayoutDashboard, LogOut, Network, Users } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -10,16 +10,18 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/it/api'
-import { CURRENT_ADMIN } from '@/lib/it/session'
+import { useMe } from '@/lib/it/hooks'
 
 const NAV = [
   { to: '/it/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/it/users', label: 'Users', icon: Users },
+  { to: '/it/teams', label: 'Teams', icon: Network },
 ]
 
 export default function ITLayout() {
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
+  const me = useMe()
 
   return (
     <TooltipProvider>
@@ -78,7 +80,7 @@ export default function ITLayout() {
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="text-sm font-medium">{current?.label}</span>
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-sm">Hi, <span className="font-medium">{CURRENT_ADMIN.firstName}</span></span>
+              {me && <span className="text-sm">Hi, <span className="font-medium">{me.firstName}</span></span>}
               {usingMockApi && <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">Mock API</span>}
               <ModeToggle />
             </div>
