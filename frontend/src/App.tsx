@@ -5,7 +5,6 @@ import DashboardITPage from '@/pages/it/DashboardPage'
 import ITLayout from '@/pages/it/ITLayout'
 import TeamsPage from '@/pages/it/TeamsPage'
 import UsersPage from '@/pages/it/UsersPage'
-import PortalPlaceholder from '@/pages/PortalPlaceholder'
 import DashboardPage from '@/pages/employee/DashboardPage'
 import EmployeeLayout from '@/pages/employee/EmployeeLayout'
 import PayStubsPage from '@/pages/employee/PayStubsPage'
@@ -17,6 +16,11 @@ import EmployeeDirectoryPage from '@/pages/payroll_admin/EmployeeDirectoryPage'
 import EmployeeRecordsPage from '@/pages/payroll_admin/EmployeeRecordsPage'
 import PayrollReleasesPage from '@/pages/payroll_admin/PayrollReleasesPage'
 import PayrollAuditPage from '@/pages/payroll_admin/PayrollAuditPage'
+import ManagerLayout from '@/pages/manager/ManagerLayout'
+import ManagerDashboardPage from '@/pages/manager/DashboardPage'
+import ManagerTimesheetsPage from '@/pages/manager/TimesheetsPage'
+import ManagerProjectsPage from '@/pages/manager/ProjectsPage'
+import ManagerTeamPage from '@/pages/manager/TeamPage'
 
 export default function App() {
   return (
@@ -37,7 +41,6 @@ export default function App() {
           <Route path="paystubs" element={<PayStubsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
-        <Route path="/manager" element={<PortalPlaceholder name="Manager" />} />
         <Route path="/payroll" element={<PayrollAdminLayout />}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<PayrollDashboardPage />} />
@@ -46,6 +49,13 @@ export default function App() {
           <Route path="records/:id" element={<EmployeeRecordsPage />} />
           <Route path="releases" element={<PayrollReleasesPage />} />
           <Route path="audit" element={<PayrollAuditPage />} />
+        </Route>
+        <Route path="/manager" element={<ManagerLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<ManagerDashboardPage />} />
+          <Route path="timesheets" element={<ManagerTimesheetsPage />} />
+          <Route path="projects" element={<ManagerProjectsPage />} />
+          <Route path="team" element={<ManagerTeamPage />} />
         </Route>
         <Route path="*" element={<LandingPage />} />
       </Routes>
