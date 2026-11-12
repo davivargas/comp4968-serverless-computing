@@ -1,6 +1,8 @@
 import datetime
 import decimal
+import json
 import os
+import uuid
 
 SENSITIVE = {"password", "account_no", "institution_no", "transit_no", "sin", "cognito_sub"}
 
@@ -68,3 +70,22 @@ def flush():
         import traceback
         print("AUDIT WRITE FAILED - these changes are committed but not logged:", messages)
         traceback.print_exc()
+
+
+def audit(conn, ctx, table, record_id, action, old_values, new_values):
+    event = {
+        "auditId": str(uuid.uuid4()),
+        "table": table,
+        "recordId": str(record_id),
+        "action": action,
+        "changedBy": ctx["employee_id"] if ctx else None,
+        "changedByName": ctx["name"] if ctx else None,
+        "changedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+        "oldValues": _redact(old_values),
+        "newValues": _redact(new_values),
+    }
+    body = json.dumps(event, default=_default)
+    if _active:
+        _pending.append(body)
+    else:
+        _send([body])
