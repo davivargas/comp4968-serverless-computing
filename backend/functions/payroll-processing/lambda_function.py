@@ -39,7 +39,52 @@ def list_periods(event, request_context):
         "canRelease": pay_period_row["status"] == "OPEN" and pay_period_row["end_date"] < today
                       and pay_period_row["unapproved_count"] == 0 and pay_period_row["employee_count"] > 0,
         "releasedAt": pay_period_row["released_at"]} for pay_period_row in pay_period_rows]}
+    
+    
+def validate_pay_period(connection, pay_period_id):
+    """Validate that a pay period exists and is eligible for release."""
 
+    pay_period = one(
+        connection,
+        "SELECT * FROM pay_period WHERE pay_period_id = %s FOR UPDATE",
+        (pay_period_id,)
+    )
+
+    if not pay_period:
+        raise HttpError(404, "Pay period not found")
+
+    if pay_period["status"] == "RELEASED":
+        raise HttpError(409, "This pay period has already been released")
+
+    if payroll.today_bc() <= pay_period["end_date"]:
+        raise HttpError(409, "This pay period has not ended yet")
+
+    return pay_period
+
+def validate_timesheets(connection, pay_period):
+    """Ensure all timesheet entries in the pay period are approved."""
+
+    unapproved_count = one(
+        connection,
+        """
+        SELECT COUNT(*)::int AS unapproved_count
+        FROM timesheet_entry
+        WHERE NOT is_deleted
+          AND work_date BETWEEN %s AND %s
+          AND NOT approved
+        """,
+        (pay_period["start_date"], pay_period["end_date"])
+    )["unapproved_count"]
+
+    if unapproved_count:
+        entry_word = "entry is" if unapproved_count == 1 else "entries are"
+
+        raise HttpError(
+            409,
+            f"{unapproved_count} timesheet {entry_word} not approved yet",
+            {"unapprovedCount": unapproved_count}
+        )
+        
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
 def money(value, field_name):
