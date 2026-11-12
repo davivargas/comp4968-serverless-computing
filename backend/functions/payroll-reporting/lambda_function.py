@@ -60,3 +60,24 @@ def list_employees(event, ctx):
             "employees": [{"employeeId": r["employee_id"], "firstName": r["first_name"], "lastName": r["last_name"], "status": r["status"],
                            "positionId": r["position_id"], "position": r["position"], "teamId": r["team_id"], "team": r["team"],
                            "hours": r["hours"], "gross": r["gross"], "deductions": r["deductions"], "net": r["net"]} for r in rows]}
+
+
+def get_employee(event, ctx):
+    emp_id, q = path_id(event), qs(event)
+    today = today_bc()
+    conn = get_conn()
+    e = one(conn, f"""SELECT e.employee_id, e.first_name, e.last_name, e.email, e.phone, e.street, e.city, e.province, e.postal_code, e.country,
+                             e.status, e.hire_date, p.title AS position, p.pay_grade, cw.hourly_wage, t.team_id, t.name AS team, t.manager_id,
+                             m.first_name || ' ' || m.last_name AS manager_name, dd.account_last4
+                        FROM employee e JOIN position p ON p.position_id = e.position_id {WAGE_JOIN}
+                        LEFT JOIN team t ON t.team_id = e.team_id LEFT JOIN employee m ON m.employee_id = t.manager_id
+                        LEFT JOIN direct_deposit dd ON dd.employee_id = e.employee_id
+                       WHERE e.employee_id = %s""", (today, today, emp_id))
+    if not e:
+        raise HttpError(404, "Employee not found")
+    pf_sql, pf_params, label = _period_filter(q)
+    agg = one(conn, f"{AGG} WHERE ps.employee_id = %s AND {pf_sql}", [emp_id] + pf_params)
+    stubs = query(conn, f"""SELECT pp.pay_date, pp.start_date, pp.end_date, ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours AS hours,
+                                   ps.gross_pay, ps.total_deductions, ps.net_pay
+                              FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
+                             WHERE ps.employee_id = %s AND {pf_sql} ORDER BY pp.pay_date DESC""", [emp_id] + pf_params)
