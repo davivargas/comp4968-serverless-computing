@@ -215,3 +215,23 @@ def calculate_paystub(entries, period_start, vacation_rate, ytd, rates):
     ot_m = sum(t[1] for t in tiers.values())
     dot_m = sum(t[2] for t in tiers.values())
     last_rate = rate_c[max(rate_c)]
+    return {
+        "hourly_rate": dollars(last_rate),
+        "regular_hours": hrs(reg_m), "overtime_hours": hrs(ot_m), "double_overtime_hours": hrs(dot_m),
+        "regular_pay": dollars(reg_c), "overtime_pay": dollars(ot_c), "double_overtime_pay": dollars(dot_c),
+        "vacation_pay": dollars(vac_c), "gross_pay": dollars(gross_c),
+        "cpp": dollars(cpp_c), "ei": dollars(ei_c), "federal_tax": dollars(fed_c), "provincial_tax": dollars(prov_c),
+        "total_deductions": dollars(ded_c), "net_pay": dollars(net_c),
+        "ytd_hours": round(float(ytd["hours"]) + hrs(reg_m + ot_m + dot_m), 2),
+        "ytd_gross": dollars(cents(ytd["gross"]) + gross_c), "ytd_cpp": dollars(cents(ytd["cpp"]) + cpp_c),
+        "ytd_ei": dollars(cents(ytd["ei"]) + ei_c), "ytd_federal_tax": dollars(cents(ytd["federal"]) + fed_c),
+        "ytd_provincial_tax": dollars(cents(ytd["provincial"]) + prov_c), "ytd_net": dollars(cents(ytd["net"]) + net_c),
+        "earnings": lines,
+    }
+
+
+def rates_for(year):
+    r = R.BY_YEAR.get(year)
+    if not r:
+        raise HttpError(500, f"No statutory CPP/EI/tax rates configured for {year}. Add them to rates.py before releasing payroll.")
+    return r
