@@ -1,6 +1,7 @@
 import { Landmark, MapPin, Phone } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { useEmployeeId } from '@/components/auth/session-context'
 import PageHeader from '@/components/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,18 +11,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { employeeApi } from '@/lib/employee/api'
 import { formatPhone, phoneDigits, toStoredPhone, validatePhone } from '@/lib/employee/phone'
-import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { Address, EmployeeProfile, ProfileUpdate } from '@/lib/employee/types'
 
 const PROVINCES = ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT']
 
 type Section = 'phone' | 'address' | 'deposit'
 
+/** Starting values for an employee with no address on file yet. */
+const EMPTY_ADDRESS: Address = { street: '', city: '', province: 'BC', postalCode: '', country: 'Canada' }
+
 export default function ProfilePage() {
+  const employeeId = useEmployeeId()
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [phone, setPhone] = useState('')
   const [phoneTouched, setPhoneTouched] = useState(false)
-  const [address, setAddress] = useState<Address | null>(null)
+  const [address, setAddress] = useState<Address>(EMPTY_ADDRESS)
   const [deposit, setDeposit] = useState({ institutionNumber: '', transitNumber: '', accountNumber: '' })
   const [saving, setSaving] = useState<Section | null>(null)
 
@@ -29,19 +33,19 @@ export default function ProfilePage() {
     setProfile(p)
     setPhone(formatPhone(p.phone))
     setPhoneTouched(false)
-    setAddress(p.address)
+    setAddress(p.address ?? EMPTY_ADDRESS)
     // Account number comes back masked; the field stays blank unless the user enters a new one.
-    setDeposit({ institutionNumber: p.directDeposit.institutionNumber, transitNumber: p.directDeposit.transitNumber, accountNumber: '' })
+    setDeposit({ institutionNumber: p.directDeposit?.institutionNumber ?? '', transitNumber: p.directDeposit?.transitNumber ?? '', accountNumber: '' })
   }
 
   useEffect(() => {
-    employeeApi.getProfile(CURRENT_EMPLOYEE_ID).then(reset).catch((e) => toast.error(`Couldn't load profile: ${e.message}`))
-  }, [])
+    employeeApi.getProfile(employeeId).then(reset).catch((e) => toast.error(`Couldn't load profile: ${e.message}`))
+  }, [employeeId])
 
   async function save(section: Section, update: ProfileUpdate) {
     setSaving(section)
     try {
-      reset(await employeeApi.updateProfile(CURRENT_EMPLOYEE_ID, update))
+      reset(await employeeApi.updateProfile(employeeId, update))
       toast.success('Profile updated')
     } catch (e) {
       toast.error(`Update failed: ${(e as Error).message}`)
@@ -50,7 +54,7 @@ export default function ProfilePage() {
     }
   }
 
-  if (!profile || !address) {
+  if (!profile) {
     return (
       <div className="mx-auto grid max-w-3xl gap-4">
         <Skeleton className="h-24" />
@@ -66,15 +70,17 @@ export default function ProfilePage() {
   const showPhoneError = phoneTouched && phoneChanged && !!phoneError
   const postalValid = address.country !== 'Canada' || /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/.test(address.postalCode)
   const addressValid = address.street.trim() && address.city.trim() && postalValid
+  const savedDeposit = profile.directDeposit
   const depositErrors = [
     !/^\d{3}$/.test(deposit.institutionNumber) && 'Institution number must be 3 digits.',
     !/^\d{5}$/.test(deposit.transitNumber) && 'Transit number must be 5 digits.',
-    deposit.accountNumber && !/^\d{7,12}$/.test(deposit.accountNumber) && 'Account number must be 7–12 digits.',
+    // With no account on file yet, the account number is required; otherwise blank keeps the current one.
+    (deposit.accountNumber || !savedDeposit) && !/^\d{7,12}$/.test(deposit.accountNumber) && 'Account number must be 7–12 digits.',
   ].filter(Boolean) as string[]
   const depositChanged =
     deposit.accountNumber !== '' ||
-    deposit.institutionNumber !== profile.directDeposit.institutionNumber ||
-    deposit.transitNumber !== profile.directDeposit.transitNumber
+    deposit.institutionNumber !== (savedDeposit?.institutionNumber ?? '') ||
+    deposit.transitNumber !== (savedDeposit?.transitNumber ?? '')
 
   return (
     <div className="mx-auto grid max-w-3xl gap-6">
@@ -83,7 +89,7 @@ export default function ProfilePage() {
       <Card>
         <CardContent className="grid gap-4 sm:grid-cols-4">
           <Info label="Name" value={`${profile.firstName} ${profile.lastName}`} />
-          <Info label="Employee ID" value={profile.employeeId} />
+          <Info label="Employee ID" value={String(profile.employeeId)} />
           <Info label="Position" value={profile.position} />
           <Info label="Pay grade" value={profile.payGrade} />
         </CardContent>
@@ -128,8 +134,8 @@ export default function ProfilePage() {
         title="Home address"
         onSave={() => save('address', { address })}
         saving={saving === 'address'}
-        canSave={!!addressValid && JSON.stringify(address) !== JSON.stringify(profile.address)}
-        onCancel={() => setAddress(profile.address)}
+        canSave={!!addressValid && JSON.stringify(address) !== JSON.stringify(profile.address ?? EMPTY_ADDRESS)}
+        onCancel={() => setAddress(profile.address ?? EMPTY_ADDRESS)}
       >
         <Field label="Street" id="street">
           <Input id="street" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
@@ -160,7 +166,7 @@ export default function ProfilePage() {
       <SectionCard
         icon={<Landmark />}
         title="Direct deposit"
-        description={`Pay is currently deposited to account ${profile.directDeposit.accountNumber}.`}
+        description={savedDeposit ? `Pay is currently deposited to account ${savedDeposit.accountNumber}.` : 'No direct deposit account on file yet. Add one to get paid by deposit.'}
         onSave={() =>
           save('deposit', {
             directDeposit: {
@@ -184,7 +190,7 @@ export default function ProfilePage() {
               onChange={(e) => setDeposit({ ...deposit, transitNumber: e.target.value.replace(/\D/g, '') })} />
           </Field>
           <Field label="Account #" id="account">
-            <Input id="account" inputMode="numeric" maxLength={12} autoComplete="off" placeholder={profile.directDeposit.accountNumber}
+            <Input id="account" inputMode="numeric" maxLength={12} autoComplete="off" placeholder={savedDeposit?.accountNumber ?? '7–12 digits'}
               value={deposit.accountNumber} onChange={(e) => setDeposit({ ...deposit, accountNumber: e.target.value.replace(/\D/g, '') })} />
           </Field>
         </div>
