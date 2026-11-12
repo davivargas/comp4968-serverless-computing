@@ -198,3 +198,20 @@ def calculate_paystub(entries, period_start, vacation_rate, ytd, rates):
             lines.append({"line_type": "OVERTIME_PREMIUM", "project_id": None, "project_code": None,
                           "hours": dollars(half_up(Fraction(dm, 60) * 100)), "rate": dollars(rc),
                           "amount": dollars(half_up(Fraction(dm * rc * 2, 60)) - dot_base)})
+    work_c = reg_c + ot_c + dot_c
+    vac_c = half_up(work_c * vacation_rate)
+    gross_c = work_c + vac_c
+    if vac_c:
+        lines.append({"line_type": "VACATION", "project_id": None, "project_code": None,
+                      "hours": 0, "rate": 0, "amount": dollars(vac_c)})
+
+    cpp1, cpp2, ei_c = cpp_ei(gross_c, cents(ytd["gross"]), cents(ytd["cpp"]), cents(ytd["ei"]), rates)
+    cpp_c = cpp1 + cpp2
+    fed_c, prov_c = income_tax(gross_c, cpp1, cpp2, ei_c, rates)
+    ded_c = cpp_c + ei_c + fed_c + prov_c
+    net_c = gross_c - ded_c
+    hrs = lambda m: dollars(half_up(Fraction(m, 60) * 100))
+    reg_m = sum(t[0] for t in tiers.values())
+    ot_m = sum(t[1] for t in tiers.values())
+    dot_m = sum(t[2] for t in tiers.values())
+    last_rate = rate_c[max(rate_c)]
