@@ -62,3 +62,17 @@ def assert_date_editable(conn, d):
     if p["status"] == "RELEASED":
         raise HttpError(409, "That pay period has already been released; timesheets are locked")
     return p
+
+
+def vacation_rate_for(hire_date, period_end):
+    return Fraction(6, 100) if (period_end - hire_date).days >= 5 * 365 + 1 else Fraction(4, 100)
+
+
+def wage_for(wages, d):
+    chosen = None
+    for eff, w in wages:
+        if eff <= d:
+            chosen = w
+        else:
+            break
+    return chosen if chosen is not None else wages[0][1]
