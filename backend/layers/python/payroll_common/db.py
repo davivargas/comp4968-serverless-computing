@@ -43,3 +43,20 @@ def get_conn():
         ctx.verify_mode = ssl.CERT_NONE
     _conn = pg8000.dbapi.connect(host=host, port=port, database=name, user=user, password=pw, ssl_context=ctx)
     return _conn
+
+
+def query(conn, sql, params=()):
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params)
+        if cur.description is None:
+            return []
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        cur.close()
+
+
+def one(conn, sql, params=()):
+    rows = query(conn, sql, params)
+    return rows[0] if rows else None
