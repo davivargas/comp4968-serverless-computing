@@ -19,3 +19,27 @@ CREATE TABLE team (
   is_deleted BOOLEAN NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX team_name_uq ON team (lower(name)) WHERE NOT is_deleted;
+
+CREATE TABLE employee (
+  employee_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cognito_sub VARCHAR(64)  NOT NULL UNIQUE,
+  first_name  VARCHAR(100) NOT NULL,
+  last_name   VARCHAR(100) NOT NULL,
+  email       VARCHAR(255) NOT NULL UNIQUE,
+  phone       VARCHAR(16),
+  street      VARCHAR(200),
+  city        VARCHAR(100),
+  province    VARCHAR(2),
+  postal_code VARCHAR(10),
+  country     VARCHAR(2),
+  role_id     SMALLINT REFERENCES role(role_id),
+  position_id INT NOT NULL REFERENCES position(position_id),
+  team_id     INT REFERENCES team(team_id),
+  status      VARCHAR(12) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','DEACTIVATED')),
+  hire_date   DATE NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE team ADD CONSTRAINT team_manager_fk FOREIGN KEY (manager_id) REFERENCES employee(employee_id);
+CREATE INDEX employee_team_idx ON employee(team_id);
+CREATE INDEX employee_position_idx ON employee(position_id);
