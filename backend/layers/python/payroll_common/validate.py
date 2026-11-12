@@ -109,3 +109,34 @@ def phone_e164(v, name="phone"):
     if not re.fullmatch(r"\+1[2-9]\d{2}[2-9]\d{6}", s):
         bad(f"{name} must be a valid Canadian or US number in E.164 format, e.g. +16045550142")
     return s
+
+
+PROVINCES = ("AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT")
+
+
+def address(v, name="address"):
+    if not isinstance(v, dict):
+        bad(f"{name} must be an object")
+    street = require_str(v.get("street"), f"{name}.street", 200)
+    city = require_str(v.get("city"), f"{name}.city", 100)
+    country = require_str(v.get("country"), f"{name}.country", 2).upper()
+    if country not in ("CA", "US"):
+        bad(f"{name}.country must be CA or US")
+    province = require_str(v.get("province"), f"{name}.province", 2).upper()
+    if country == "CA" and province not in PROVINCES:
+        bad(f"{name}.province must be a Canadian province or territory code, e.g. BC")
+    postal = require_str(v.get("postalCode"), f"{name}.postalCode", 10).upper()
+    if country == "CA":
+        if not re.fullmatch(r"[A-Z]\d[A-Z] ?\d[A-Z]\d", postal):
+            bad(f"{name}.postalCode must look like V6B 1A1")
+        postal = postal[:3] + " " + postal[-3:]
+    elif not re.fullmatch(r"\d{5}(-\d{4})?", postal):
+        bad(f"{name}.postalCode must be a ZIP code")
+    return {"street": street, "city": city, "province": province, "postal_code": postal, "country": country}
+
+
+def address_json(r):
+    if not r.get("street"):
+        return None
+    return {"street": r["street"], "city": r["city"], "province": r["province"],
+            "postalCode": r["postal_code"], "country": r["country"]}
