@@ -95,3 +95,17 @@ def order_by(q, allowed, default_key):
     if direction not in ("asc", "desc"):
         bad("order must be asc or desc")
     return f"ORDER BY {allowed[key]} {direction.upper()}"
+
+
+def digits(v, name, lengths):
+    s = require_str(str(v) if v is not None else None, name)
+    if not re.fullmatch(r"\d+", s) or len(s) not in lengths:
+        bad(f"{name} must be {' or '.join(str(x) for x in lengths)} digits")
+    return s
+
+
+def phone_e164(v, name="phone"):
+    s = require_str(v, name, 20)
+    if not re.fullmatch(r"\+1[2-9]\d{2}[2-9]\d{6}", s):
+        bad(f"{name} must be a valid Canadian or US number in E.164 format, e.g. +16045550142")
+    return s
