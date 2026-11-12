@@ -1,3 +1,4 @@
+import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type { CreatePositionInput, EmployeeFilters, EmployeeRecord, PayPeriod, PayrollEmployee, Position } from './types'
 
@@ -20,7 +21,11 @@ const qs = (params: Record<string, string | number | undefined>) => {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    // The backend checks X-Active-Role against the signed-in user's roles; /pa routes need PAYROLL_ADMIN.
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'PAYROLL_ADMIN', ...authHeaders(), ...init?.headers },
+  })
   if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`)
   return response.status === 204 ? (undefined as T) : response.json()
 }
