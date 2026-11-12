@@ -14,7 +14,7 @@ ZERO = Fraction(0)
 def cfg():
     return {
         "anchor": datetime.date.fromisoformat(os.environ.get("PAY_PERIOD_ANCHOR", "2026-01-04")),
-        "lag": int(os.environ.get("PAY_DATE_LAG_DAYS", 5)),
+        "lag": int(os.environ.get("PAY_DATE_LAG_DAYS", 6)),
     }
 
 
