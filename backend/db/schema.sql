@@ -11,3 +11,11 @@ CREATE TABLE position (
   is_deleted  BOOLEAN NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX position_title_uq ON position (lower(title)) WHERE NOT is_deleted;
+
+CREATE TABLE team (
+  team_id    INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name       VARCHAR(100) NOT NULL,
+  manager_id INT NOT NULL,
+  is_deleted BOOLEAN NOT NULL DEFAULT false
+);
+CREATE UNIQUE INDEX team_name_uq ON team (lower(name)) WHERE NOT is_deleted;
