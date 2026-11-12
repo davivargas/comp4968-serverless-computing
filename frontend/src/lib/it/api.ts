@@ -1,3 +1,4 @@
+import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type {
   CreateAccountInput, ListUsersParams, Me, Position, Role, Status, Team, TeamInput, UpdateUserInput, User, UsersPage,
@@ -37,9 +38,7 @@ const ACTIVE_ROLE: Role = 'IT'
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...init?.headers },
-    // TODO: attach the Cognito ID token once auth is wired up:
-    // headers: { Authorization: `Bearer ${idToken}` }
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
   })
   if (!res.ok) {
     const text = await res.text()
