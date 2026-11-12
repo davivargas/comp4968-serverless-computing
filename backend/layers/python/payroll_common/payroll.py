@@ -126,3 +126,32 @@ def _bracket(a, brackets):
         if a >= b[0]:
             chosen = b
     return F(chosen[1]), F(chosen[2])
+
+
+def income_tax(gross_c, cpp1_c, cpp2_c, ei_c, rates):
+    P, t = R.PERIODS_PER_YEAR, rates["tax"]
+    cpp = rates["cpp"]
+    i = Fraction(gross_c, 100)
+    cpp1, cpp2, ei = Fraction(cpp1_c, 100), Fraction(cpp2_c, 100), Fraction(ei_c, 100)
+    f5a = cpp1 * F(cpp["enhanced_rate"]) / F(cpp["rate"]) + cpp2
+    a = max(ZERO, P * (i - f5a))
+    credit_base = (min(P * cpp1 * F(cpp["base_rate"]) / F(cpp["rate"]), F(cpp["base_credit_max"]))
+                   + min(P * ei, F(rates["ei"]["max"])))
+    fed = t["federal"]
+    r, k = _bracket(a, fed["brackets"])
+    k2 = F(fed["lowest_rate"]) * credit_base
+    k4 = min(F(fed["lowest_rate"]) * a, F(fed["lowest_rate"]) * t["cea"])
+    t3 = max(ZERO, r * a - k - k2 - k4)
+    bc = t["bc"]
+    v, kp = _bracket(a, bc["brackets"])
+    k2p = F(bc["lowest_rate"]) * credit_base
+    t4 = max(ZERO, v * a - kp - k2p)
+    red = bc["reduction"]
+    if a <= red["start"]:
+        s = min(t4, F(red["max"]))
+    elif a <= red["end"]:
+        s = min(t4, max(ZERO, F(red["max"]) - (a - red["start"]) * F(red["rate"])))
+    else:
+        s = ZERO
+    t2 = max(ZERO, t4 - s)
+    return half_up(t3 * 100 / P), half_up(t2 * 100 / P)
