@@ -61,6 +61,7 @@ def validate_pay_period(connection, pay_period_id):
 
     return pay_period
 
+
 def validate_timesheets(connection, pay_period):
     """Ensure all timesheet entries in the pay period are approved."""
 
@@ -84,6 +85,39 @@ def validate_timesheets(connection, pay_period):
             f"{unapproved_count} timesheet {entry_word} not approved yet",
             {"unapprovedCount": unapproved_count}
         )
+        
+
+def load_payroll_employees(connection, pay_period):
+    employees = query(
+        connection,
+        """
+        SELECT employee.employee_id,
+               employee.first_name || ' ' || employee.last_name AS employee_name,
+               employee.hire_date,
+               employee.position_id,
+               position.title,
+               direct_deposit.account_last4
+        FROM employee
+        JOIN position ON position.position_id = employee.position_id
+        LEFT JOIN direct_deposit ON direct_deposit.employee_id = employee.employee_id
+        WHERE employee.employee_id IN (
+            SELECT employee_id
+            FROM timesheet_entry
+            WHERE NOT is_deleted
+              AND work_date BETWEEN %s AND %s
+        )
+        ORDER BY employee.employee_id
+        """,
+        (pay_period["start_date"], pay_period["end_date"])
+    )
+
+    if not employees:
+        raise HttpError(
+            409,
+            "No timesheet entries in this pay period; nothing to release"
+        )
+
+    return employees
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
