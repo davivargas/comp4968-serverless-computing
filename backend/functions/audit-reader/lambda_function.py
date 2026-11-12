@@ -1,4 +1,6 @@
+import base64
 import datetime
+import json
 import os
 from zoneinfo import ZoneInfo
 
@@ -50,3 +52,39 @@ def logs(event, ctx):
         if val is not None and val != "":
             c = Attr(attr).eq(str(val) if key in ("table", "recordId") else val)
             flt = c if flt is None else flt & c
+    months = _month_list(lo, hi - datetime.timedelta(microseconds=1))
+    start_key = None
+    if q.get("nextToken"):
+        try:
+            tok = json.loads(base64.urlsafe_b64decode(q["nextToken"]))
+            months = [m for m in months if m <= tok["m"]]
+            start_key = tok.get("lek")
+            if not months or months[0] != tok["m"]:
+                raise ValueError
+        except Exception:
+            bad("nextToken is not valid for this query")
+    items, next_token, calls, done = [], None, 0, False
+    for mi, month in enumerate(months):
+        lek = start_key if mi == 0 else None
+        while True:
+            args = {"KeyConditionExpression": Key("month").eq(month) & Key("sk").between(lo_s, hi_s),
+                    "ScanIndexForward": False, "Limit": limit - len(items)}
+            if flt is not None:
+                args["FilterExpression"] = flt
+            if lek:
+                args["ExclusiveStartKey"] = lek
+            res = table().query(**args)
+            calls += 1
+            items += res.get("Items", [])
+            lek = res.get("LastEvaluatedKey")
+            if len(items) >= limit or calls >= 60:
+                if lek:
+                    next_token = {"m": month, "lek": lek}
+                elif mi + 1 < len(months):
+                    next_token = {"m": months[mi + 1], "lek": None}
+                done = True
+                break
+            if not lek:
+                break
+        if done:
+            break
