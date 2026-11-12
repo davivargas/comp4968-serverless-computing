@@ -3,10 +3,12 @@ from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from payroll_common import payroll as payroll
+from payroll_common.audit import audit
 from payroll_common.auth import with_auth
-from payroll_common.db import get_conn, one, query
-from payroll_common.http_utils import router
-from payroll_common.validate import bad
+from payroll_common.db import get_conn, one, query, transaction
+from payroll_common.http_utils import HttpError, created, no_content, parse_body, router
+from payroll_common.validate import bad, path_id, require_bool_true, require_date, require_str
+
 
 PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
 
@@ -24,6 +26,7 @@ def money(value, field_name):
     if decimal_value != decimal_value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
         bad(f"{field_name} can have at most 2 decimal places")
     return decimal_value.quantize(Decimal("0.01"))
+
 
 def position_json(connection, position_id):
     today = payroll.today_bc()
@@ -45,6 +48,91 @@ def list_positions(event, request_context):
     position_rows = query(connection, "SELECT position_id FROM position WHERE NOT is_deleted ORDER BY title")
     return {"positions": [position_json(connection, position_row["position_id"]) for position_row in position_rows]}
 
+
+def _title_taken(connection, title, excluded_position_id=None):
+    return one(connection, "SELECT 1 AS position_exists FROM position WHERE lower(title) = lower(%s) AND NOT is_deleted AND position_id <> %s",
+               (title, excluded_position_id or 0))
+
+
+def create_position(event, request_context):
+    """POST /pa/positions  body {title, payGrade, hourlyRate, effectiveFrom}"""
+    request_body = parse_body(event)
+    title = require_str(request_body.get("title"), "title", 100)
+    pay_grade = require_str(request_body.get("payGrade"), "payGrade", 30)
+    hourly_wage = money(request_body.get("hourlyRate"), "hourlyRate")
+    effective_from = require_date(request_body.get("effectiveFrom"), "effectiveFrom")
+    with transaction() as connection:
+        if _title_taken(connection, title):
+            raise HttpError(409, "A position with that title already exists")
+        inserted_position = one(connection, "INSERT INTO position (title, pay_grade) VALUES (%s, %s) RETURNING position_id", (title, pay_grade))
+        position_id = inserted_position["position_id"]
+        query(connection, "INSERT INTO position_wage (position_id, hourly_wage, effective_from, created_by) VALUES (%s, %s, %s, %s)",
+              (position_id, hourly_wage, effective_from, request_context["employee_id"]))
+        audit(connection, request_context, "position", position_id, "INSERT", None, {"title": title, "pay_grade": pay_grade})
+        audit(connection, request_context, "position_wage", f"{position_id}:{effective_from}", "INSERT", None,
+              {"position_id": position_id, "hourly_wage": hourly_wage, "effective_from": effective_from})
+        return created(position_json(connection, position_id))
+
+
+def update_position(event, request_context):
+    """PATCH /pa/positions/{id}  any of {title, payGrade, hourlyRate + effectiveFrom, isDeleted: true}"""
+    position_id = path_id(event)
+    request_body = parse_body(event)
+    changed_position_fields = {}
+    if "title" in request_body:
+        changed_position_fields["title"] = require_str(request_body["title"], "title", 100)
+    if "payGrade" in request_body:
+        changed_position_fields["pay_grade"] = require_str(request_body["payGrade"], "payGrade", 30)
+    new_wage_details = None
+    if "hourlyRate" in request_body or "effectiveFrom" in request_body:
+        if "hourlyRate" not in request_body or "effectiveFrom" not in request_body:
+            bad("A wage change needs hourlyRate and effectiveFrom together")
+        new_wage_details = (
+            money(request_body["hourlyRate"], "hourlyRate"),
+            require_date(request_body["effectiveFrom"], "effectiveFrom")
+        )
+    deleting_position = "isDeleted" in request_body and require_bool_true(request_body["isDeleted"], "isDeleted")
+    if not changed_position_fields and not new_wage_details and not deleting_position:
+        bad("No updatable fields supplied")
+    with transaction() as connection:
+        old_position = one(connection, "SELECT * FROM position WHERE position_id = %s AND NOT is_deleted FOR UPDATE", (position_id,))
+        if not old_position:
+            raise HttpError(404, "Position not found")
+        if deleting_position and one(connection, "SELECT 1 AS employee_exists FROM employee WHERE position_id = %s", (position_id,)):
+            raise HttpError(409, "Employees still hold this position; change their position first")
+        if "title" in changed_position_fields and _title_taken(connection, changed_position_fields["title"], position_id):
+            raise HttpError(409, "A position with that title already exists")
+        if new_wage_details:
+            latest_released_period_end = one(connection, "SELECT MAX(end_date) AS latest_released_period_end FROM pay_period WHERE status = 'RELEASED'")["latest_released_period_end"]
+            if latest_released_period_end and new_wage_details[1] <= latest_released_period_end:
+                raise HttpError(400, f"effectiveFrom must be after {latest_released_period_end}, the end of the latest released pay period")
+            previous_wage = one(connection, "SELECT hourly_wage FROM position_wage WHERE position_id = %s AND effective_from = %s",
+                                 (position_id, new_wage_details[1]))
+            query(connection, """INSERT INTO position_wage (position_id, hourly_wage, effective_from, created_by) VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (position_id, effective_from) DO UPDATE SET hourly_wage = EXCLUDED.hourly_wage,
+                                                                                    created_by = EXCLUDED.created_by, created_at = now()""",
+                  (position_id, new_wage_details[0], new_wage_details[1], request_context["employee_id"]))
+            audit(connection, request_context, "position_wage", f"{position_id}:{new_wage_details[1]}",
+                  "UPDATE" if previous_wage else "INSERT",
+                  {"hourly_wage": previous_wage["hourly_wage"]} if previous_wage else None,
+                  {"hourly_wage": new_wage_details[0], "effective_from": new_wage_details[1]})
+        if changed_position_fields:
+            changed_column_names = list(changed_position_fields)
+            update_assignments = ", ".join(column_name + " = %s" for column_name in changed_column_names)
+            query(connection, f"UPDATE position SET {update_assignments} WHERE position_id = %s",
+                  [changed_position_fields[column_name] for column_name in changed_column_names] + [position_id])
+            audit(connection, request_context, "position", position_id, "UPDATE",
+                  {column_name: old_position[column_name] for column_name in changed_column_names},
+                  changed_position_fields)
+        if deleting_position:
+            query(connection, "UPDATE position SET is_deleted = true WHERE position_id = %s", (position_id,))
+            audit(connection, request_context, "position", position_id, "DELETE", {"is_deleted": False}, {"is_deleted": True})
+            return no_content()
+        return position_json(connection, position_id)
+
+
 lambda_handler = router({
     "GET /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, list_positions),
+    "POST /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, create_position),
+    "PATCH /pa/positions/{id}": with_auth(PAYROLL_ADMIN_ROLES, update_position),
 })
