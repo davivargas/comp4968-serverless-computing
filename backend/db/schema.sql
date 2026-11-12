@@ -43,3 +43,13 @@ CREATE TABLE employee (
 ALTER TABLE team ADD CONSTRAINT team_manager_fk FOREIGN KEY (manager_id) REFERENCES employee(employee_id);
 CREATE INDEX employee_team_idx ON employee(team_id);
 CREATE INDEX employee_position_idx ON employee(position_id);
+
+CREATE TABLE position_wage (
+  wage_id        INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  position_id    INT NOT NULL REFERENCES position(position_id),
+  hourly_wage    NUMERIC(10,2) NOT NULL CHECK (hourly_wage >= 0),
+  effective_from DATE NOT NULL,
+  created_by     INT NOT NULL REFERENCES employee(employee_id),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (position_id, effective_from)
+);
