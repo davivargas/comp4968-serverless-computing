@@ -32,3 +32,8 @@ def with_auth(roles, fn):
             raise HttpError(403, f"This page requires the {' / '.join(roles)} role")
         return fn(event, ctx)
     return wrapped
+
+
+def assert_self(ctx, emp_id):
+    if ctx["employee_id"] != emp_id:
+        raise HttpError(403, "You can only access your own records")
