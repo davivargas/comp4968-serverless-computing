@@ -72,3 +72,11 @@ CREATE TABLE project (
   created_by   INT NOT NULL REFERENCES employee(employee_id),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE project_assignment (
+  project_id  INT NOT NULL REFERENCES project(project_id),
+  employee_id INT NOT NULL REFERENCES employee(employee_id),
+  assigned_by INT NOT NULL REFERENCES employee(employee_id),
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, employee_id)
+);
