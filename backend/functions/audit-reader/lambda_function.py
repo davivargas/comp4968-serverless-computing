@@ -88,3 +88,10 @@ def logs(event, ctx):
                 break
         if done:
             break
+    out = [{"auditId": i["auditId"], "table": i["table"], "recordId": i["recordId"], "action": i["action"],
+            "changedBy": int(i["changedBy"]) if "changedBy" in i else None, "changedByName": i.get("changedByName"),
+            "changedAt": i["changedAt"], "oldValues": json.loads(i["oldValues"]), "newValues": json.loads(i["newValues"])} for i in items]
+    return {"logs": out, "nextToken": base64.urlsafe_b64encode(json.dumps(next_token).encode()).decode() if next_token else None}
+
+
+lambda_handler = router({"GET /audit/logs": with_auth(["IT", "PAYROLL_ADMIN"], logs)})
