@@ -118,6 +118,21 @@ def load_payroll_employees(connection, pay_period):
         )
 
     return employees
+
+def load_and_validate_wages(connection, employees):
+    wages_by_position_id = payroll.load_wages(
+        connection,
+        {employee["position_id"] for employee in employees}
+    )
+
+    for employee in employees:
+        if not wages_by_position_id[employee["position_id"]]:
+            raise HttpError(
+                409,
+                f'The position "{employee["title"]}" has no wage set; add one before releasing'
+            )
+
+    return wages_by_position_id
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
