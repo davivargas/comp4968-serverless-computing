@@ -53,3 +53,12 @@ CREATE TABLE position_wage (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (position_id, effective_from)
 );
+
+CREATE TABLE direct_deposit (
+  employee_id    INT PRIMARY KEY REFERENCES employee(employee_id),
+  institution_no CHAR(3) NOT NULL,
+  transit_no     CHAR(5) NOT NULL,
+  account_no     TEXT NOT NULL,
+  account_last4  CHAR(4) NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
