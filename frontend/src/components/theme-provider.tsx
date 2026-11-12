@@ -9,7 +9,18 @@ import type { ComponentProps } from 'react'
  */
 export function ThemeProvider({ children, ...props }: ComponentProps<typeof NextThemesProvider>) {
   return (
-    <NextThemesProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange storageKey="theme" {...props}>
+    <NextThemesProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+      storageKey="theme"
+      // next-themes renders an inline <script> meant for server rendering. In this client-only app it
+      // never runs and React 19 warns about it, so mark it as inert data. index.html applies the
+      // saved theme before React loads instead, which prevents the flash of the wrong theme.
+      scriptProps={{ type: 'application/json' }}
+      {...props}
+    >
       {children}
     </NextThemesProvider>
   )
