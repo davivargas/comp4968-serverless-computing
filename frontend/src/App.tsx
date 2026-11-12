@@ -10,6 +10,11 @@ import EmployeeLayout from '@/pages/employee/EmployeeLayout'
 import PayStubsPage from '@/pages/employee/PayStubsPage'
 import ProfilePage from '@/pages/employee/ProfilePage'
 import TimesheetsPage from '@/pages/employee/TimesheetsPage'
+import ManagerLayout from '@/pages/manager/ManagerLayout'
+import ManagerDashboardPage from '@/pages/manager/DashboardPage'
+import ManagerTimesheetsPage from '@/pages/manager/TimesheetsPage'
+import ManagerProjectsPage from '@/pages/manager/ProjectsPage'
+import ManagerTeamPage from '@/pages/manager/TeamPage'
 
 export default function App() {
   return (
@@ -29,7 +34,13 @@ export default function App() {
           <Route path="paystubs" element={<PayStubsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
-        <Route path="/manager" element={<PortalPlaceholder name="Manager" />} />
+        <Route path="/manager" element={<ManagerLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<ManagerDashboardPage />} />
+          <Route path="timesheets" element={<ManagerTimesheetsPage />} />
+          <Route path="projects" element={<ManagerProjectsPage />} />
+          <Route path="team" element={<ManagerTeamPage />} />
+        </Route>
         <Route path="/payroll" element={<PortalPlaceholder name="Payroll Admin" />} />
         <Route path="*" element={<LandingPage />} />
       </Routes>
