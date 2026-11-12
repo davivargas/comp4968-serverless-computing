@@ -80,3 +80,25 @@ CREATE TABLE project_assignment (
   assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (project_id, employee_id)
 );
+
+CREATE TABLE timesheet_entry (
+  timesheet_id     INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  employee_id      INT NOT NULL REFERENCES employee(employee_id),
+  project_id       INT NOT NULL REFERENCES project(project_id),
+  work_date        DATE NOT NULL,
+  start_time       TIME NOT NULL,
+  end_time         TIME NOT NULL,
+  submitted        BOOLEAN NOT NULL DEFAULT false,
+  submitted_at     TIMESTAMPTZ,
+  approved         BOOLEAN NOT NULL DEFAULT false,
+  reviewed_by      INT REFERENCES employee(employee_id),
+  reviewed_at      TIMESTAMPTZ,
+  is_deleted       BOOLEAN NOT NULL DEFAULT false,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (end_time > start_time),
+  CHECK (NOT approved OR submitted)
+);
+CREATE INDEX timesheet_emp_date_idx ON timesheet_entry(employee_id, work_date) WHERE NOT is_deleted;
+CREATE INDEX timesheet_date_idx     ON timesheet_entry(work_date) WHERE NOT is_deleted;
+CREATE INDEX timesheet_project_idx  ON timesheet_entry(project_id);
