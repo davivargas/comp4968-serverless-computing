@@ -1,9 +1,11 @@
 import json
 import os
 import ssl
+from contextlib import contextmanager
 
 import pg8000.dbapi
 
+from . import audit as _audit
 
 _conn = None
 
@@ -60,3 +62,20 @@ def query(conn, sql, params=()):
 def one(conn, sql, params=()):
     rows = query(conn, sql, params)
     return rows[0] if rows else None
+
+
+@contextmanager
+def transaction():
+    conn = get_conn()
+    _audit.begin()
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        _audit.discard()
+        raise
+    _audit.flush()
