@@ -102,3 +102,14 @@ CREATE TABLE timesheet_entry (
 CREATE INDEX timesheet_emp_date_idx ON timesheet_entry(employee_id, work_date) WHERE NOT is_deleted;
 CREATE INDEX timesheet_date_idx     ON timesheet_entry(work_date) WHERE NOT is_deleted;
 CREATE INDEX timesheet_project_idx  ON timesheet_entry(project_id);
+
+CREATE TABLE pay_period (
+  pay_period_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  start_date    DATE NOT NULL UNIQUE,
+  end_date      DATE NOT NULL,
+  pay_date      DATE NOT NULL UNIQUE,
+  status        VARCHAR(10) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','RELEASED')),
+  released_by   INT REFERENCES employee(employee_id),
+  released_at   TIMESTAMPTZ,
+  CHECK (end_date = start_date + 13)
+);
