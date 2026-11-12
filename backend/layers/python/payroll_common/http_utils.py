@@ -58,3 +58,26 @@ def parse_body(event):
         return data
     except Exception:
         raise HttpError(400, "Request body must be a JSON object")
+
+
+def qs(event):
+    return event.get("queryStringParameters") or {}
+
+
+def router(routes):
+    def handler(event, context=None):
+        try:
+            fn = routes.get(f"{event.get('httpMethod')} {event.get('resource')}")
+            if fn is None:
+                raise HttpError(404, "Route not found")
+            result = fn(event)
+            if isinstance(result, dict) and "statusCode" in result:
+                return result
+            return response(200, result if result is not None else {"ok": True})
+        except HttpError as e:
+            return response(e.status, {"error": e.message, "details": e.details})
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return response(500, {"error": "Internal server error"})
+    return handler
