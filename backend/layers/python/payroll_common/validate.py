@@ -75,3 +75,23 @@ def require_bool_true(v, name):
 
 def path_id(event, name="id"):
     return require_int((event.get("pathParameters") or {}).get(name), name)
+
+
+def paging(q, default_limit=50, max_limit=200):
+    limit = require_int(q.get("limit", default_limit), "limit")
+    offset = require_int(q.get("offset", 0), "offset")
+    if limit < 1 or limit > max_limit:
+        bad(f"limit must be between 1 and {max_limit}")
+    if offset < 0:
+        bad("offset must be >= 0")
+    return limit, offset
+
+
+def order_by(q, allowed, default_key):
+    key = q.get("sort", default_key)
+    if key not in allowed:
+        bad(f"sort must be one of: {', '.join(allowed)}")
+    direction = q.get("order", "asc").lower()
+    if direction not in ("asc", "desc"):
+        bad("order must be asc or desc")
+    return f"ORDER BY {allowed[key]} {direction.upper()}"
