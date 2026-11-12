@@ -1,4 +1,8 @@
+import type { ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import AuthRoot from '@/components/auth/AuthRoot'
+import RequireRole from '@/components/auth/RequireRole'
+import { PORTALS } from '@/lib/portals'
 import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
 import DashboardITPage from '@/pages/it/DashboardPage'
@@ -25,23 +29,24 @@ import ManagerTeamPage from '@/pages/manager/TeamPage'
 export default function App() {
   return (
     <BrowserRouter>
+      <AuthRoot>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login/:portalId" element={<LoginPage />} />
-        <Route path="/it" element={<ITLayout />}>
+        <Route path="/it" element={<Guard portalId="it"><ITLayout /></Guard>}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardITPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="teams" element={<TeamsPage />} />
         </Route>
-        <Route path="/employee" element={<EmployeeLayout />}>
+        <Route path="/employee" element={<Guard portalId="employee"><EmployeeLayout /></Guard>}>
           <Route index element={<Navigate to="timesheets" replace />} />
           <Route path="timesheets" element={<TimesheetsPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="paystubs" element={<PayStubsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
-        <Route path="/payroll" element={<PayrollAdminLayout />}>
+        <Route path="/payroll" element={<Guard portalId="payroll"><PayrollAdminLayout /></Guard>}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<PayrollDashboardPage />} />
           <Route path="directory" element={<EmployeeDirectoryPage />} />
@@ -50,7 +55,7 @@ export default function App() {
           <Route path="releases" element={<PayrollReleasesPage />} />
           <Route path="audit" element={<PayrollAuditPage />} />
         </Route>
-        <Route path="/manager" element={<ManagerLayout />}>
+        <Route path="/manager" element={<Guard portalId="manager"><ManagerLayout /></Guard>}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<ManagerDashboardPage />} />
           <Route path="timesheets" element={<ManagerTimesheetsPage />} />
@@ -59,6 +64,13 @@ export default function App() {
         </Route>
         <Route path="*" element={<LandingPage />} />
       </Routes>
+      </AuthRoot>
     </BrowserRouter>
   )
+}
+
+/** Signed in and holding the portal's role (always passes with the mock API). */
+function Guard({ portalId, children }: { portalId: string; children: ReactNode }) {
+  const portal = PORTALS.find((p) => p.id === portalId)!
+  return <RequireRole role={portal.role} portalId={portal.id} portalName={portal.name}>{children}</RequireRole>
 }

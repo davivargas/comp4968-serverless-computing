@@ -1,22 +1,39 @@
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { Link, Navigate, useParams } from 'react-router-dom'
+import FullScreenMessage from '@/components/auth/FullScreenMessage'
+import { useSession } from '@/components/auth/session-context'
 import { Button } from '@/components/ui/button'
+import { APP_NAME } from '@/lib/brand'
 import { PORTALS } from '@/lib/portals'
 
-// PLACEHOLDER: the real sign-in (Cognito) goes here. For now the button just continues to the portal.
+/**
+ * Picking a portal tile lands here. Signed in: go straight to the portal (its guard checks the role).
+ * Signed out: go straight to the Cognito sign-in page, with no extra button to click.
+ */
 export default function LoginPage() {
   const { portalId } = useParams()
-  const navigate = useNavigate()
+  const { status, error, signIn } = useSession()
   const portal = PORTALS.find((p) => p.id === portalId)
-  if (!portal) return <Navigate to="/" replace />
+  const started = useRef(false)
 
-  return (
-    <div className="flex min-h-svh items-center justify-center px-6">
-      <div className="w-full max-w-sm rounded-lg border bg-card p-6">
-        <h1 className="text-xl font-semibold">{portal.name} sign in</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Login page placeholder. Authentication isn't connected yet.</p>
-        <Button className="mt-6 w-full" onClick={() => navigate(portal.path)}>Continue (mock sign in)</Button>
-        <Button asChild variant="ghost" className="mt-2 w-full"><Link to="/">Back</Link></Button>
-      </div>
-    </div>
-  )
+  useEffect(() => {
+    if (!portal || status !== 'signedOut' || started.current) return
+    started.current = true // StrictMode runs effects twice in dev; redirect once
+    signIn(portal.path)
+  }, [portal, status, signIn])
+
+  if (!portal) return <Navigate to="/" replace />
+  if (status === 'signedIn') return <Navigate to={portal.path} replace />
+  if (status === 'error') {
+    return (
+      <FullScreenMessage title="Sign-in didn't work">
+        <p>{error ?? 'Unknown error.'}</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <Button onClick={() => signIn(portal.path)}>Try again</Button>
+          <Button asChild variant="ghost"><Link to="/">Back</Link></Button>
+        </div>
+      </FullScreenMessage>
+    )
+  }
+  return <FullScreenMessage title={`Taking you to ${APP_NAME} sign-in…`} loading />
 }
