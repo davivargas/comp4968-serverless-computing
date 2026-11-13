@@ -3,10 +3,10 @@ import calendar
 import datetime
 
 from payroll_common.auth import assert_self
-from payroll_common.db import get_conn, query
-from payroll_common.http_utils import qs
-from payroll_common.payroll import deductions_json, today_bc
-from payroll_common.validate import one_of, opt_date, opt_int, path_id
+from payroll_common.db import get_conn, one, query
+from payroll_common.http_utils import HttpError, qs
+from payroll_common.payroll import deductions_json, mask, today_bc
+from payroll_common.validate import one_of, opt_date, opt_int, path_id, require_date
 
 # SQL group key per granularity (whitelist - never built from user input)
 GROUP = {"monthly": "date_trunc('month', pp.pay_date)::date", "quarterly": "date_trunc('quarter', pp.pay_date)::date", "ytd": "DATE '1900-01-01'"}
@@ -63,3 +63,31 @@ def list_stubs(event, ctx):
                           "periodEnd": paystub_row["end_date"], "hours": paystub_row["hours"],
                           "gross": paystub_row["gross_pay"], "net": paystub_row["net_pay"]}
                          for paystub_row in paystub_rows]}
+    
+
+def get_stub(event, ctx):
+    """GET /employee/{id}/pay-stubs/{payDate}"""
+    emp_id = path_id(event)
+    assert_self(ctx, emp_id)
+    pay_date = require_date((event.get("pathParameters") or {}).get("payDate"), "payDate")
+    connection = get_conn()
+    paystub = one(connection, """SELECT ps.*, pp.pay_date, pp.start_date, pp.end_date FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
+                      WHERE ps.employee_id = %s AND pp.pay_date = %s""", (emp_id, pay_date))
+    if not paystub:
+        raise HttpError(404, "No pay stub for that pay date")
+    earning_lines = query(connection, "SELECT line_type, project_code, hours, rate, amount FROM paystub_earning WHERE paystub_id = %s ORDER BY earning_id",
+                          (paystub["paystub_id"],))
+    return {
+        "employeeId": paystub["employee_id"], "employeeName": paystub["employee_name"],
+        "position": paystub["position_title"], "payDate": paystub["pay_date"],
+        "periodStart": paystub["start_date"], "periodEnd": paystub["end_date"],
+        "hours": round(float(paystub["regular_hours"] + paystub["overtime_hours"] + paystub["double_overtime_hours"]), 2),
+        "gross": paystub["gross_pay"], "net": paystub["net_pay"],
+        "earnings": [{"lineType": earning_line["line_type"], "projectCode": earning_line["project_code"],
+                      "hours": earning_line["hours"], "rate": earning_line["rate"],
+                      "amount": earning_line["amount"]} for earning_line in earning_lines],
+        "deductions": deductions_json(paystub),
+        "ytd": {"hours": paystub["ytd_hours"], "gross": paystub["ytd_gross"],
+                "deductions": deductions_json(paystub, "ytd_"), "net": paystub["ytd_net"]},
+        "depositAccount": mask(paystub["deposit_account_last4"]),
+    }
