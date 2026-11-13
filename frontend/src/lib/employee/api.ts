@@ -1,3 +1,4 @@
+import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type {
   AggregatePay, EmployeeProfile, Granularity, ISODate, NewTimesheetEntry, PayPeriod, PayStub, PayStubSummary,
@@ -23,16 +24,25 @@ export interface EmployeeApi {
   updateProfile(employeeId: string, update: ProfileUpdate): Promise<EmployeeProfile>
 }
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
+// Trailing slashes are trimmed so ".../prod/" and ".../prod" both work.
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') || undefined
+
+/** The backend checks this header against the signed-in user's roles. This portal is always EMPLOYEE. */
+const ACTIVE_ROLE = 'EMPLOYEE'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    // TODO: attach the Cognito ID token once auth is wired up:
-    // headers: { Authorization: `Bearer ${idToken}` }
+    // authHeaders() adds the Cognito ID token that API Gateway checks before any Lambda runs.
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
   })
-  if (!res.ok) throw new Error((await res.text()) || `${res.status} ${res.statusText}`)
+  if (!res.ok) {
+    // The Lambdas reply with { message } (400, 403, 409, ...); show that rather than raw JSON.
+    const text = await res.text()
+    let message = text
+    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
+    throw new Error(message || `${res.status} ${res.statusText}`)
+  }
   return res.status === 204 ? (undefined as T) : res.json()
 }
 

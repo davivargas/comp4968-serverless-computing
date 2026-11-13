@@ -3,7 +3,7 @@
 import type { EmployeeApi } from './api'
 import { addDays, fromISODate, MONTHS, toISODate } from './dates'
 import type {
-  AggregatePay, Deductions, EmployeeProfile, ISODate, NewTimesheetEntry, PayPeriod, PayPeriodAggregate, PayStub, PayStubSummary, Project, TimesheetEntry,
+  Address, AggregatePay, Deductions, DirectDeposit, EmployeeProfile, ISODate, NewTimesheetEntry, PayPeriod, PayPeriodAggregate, PayStub, PayStubSummary, Project, TimesheetEntry,
 } from './types'
 
 const PROJECTS: Project[] = [
@@ -14,7 +14,10 @@ const PROJECTS: Project[] = [
   { projectCode: 'TRN-001', name: 'Training' },
 ]
 
-const DEFAULT_PROFILE: EmployeeProfile = {
+/** The mock always has every detail filled in; the real backend may send nulls. */
+type FullProfile = EmployeeProfile & { phone: string; address: Address; directDeposit: DirectDeposit }
+
+const DEFAULT_PROFILE: FullProfile = {
   employeeId: 'E1001',
   firstName: 'Alex',
   lastName: 'Morgan',
@@ -51,7 +54,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 const mask = (acct: string) => `${'*'.repeat(Math.max(0, acct.length - 4))}${acct.slice(-4)}`
 
 let timesheets: TimesheetEntry[] = load(TS_KEY, [])
-let profile: EmployeeProfile = load(PROFILE_KEY, DEFAULT_PROFILE)
+let profile: FullProfile = load(PROFILE_KEY, DEFAULT_PROFILE)
 
 const publicProfile = (): EmployeeProfile => ({
   ...profile,

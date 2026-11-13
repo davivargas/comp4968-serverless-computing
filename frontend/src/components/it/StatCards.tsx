@@ -1,11 +1,8 @@
-import type { Employee } from '@/lib/it/types'
-
-export function StatCards({ employees }: { employees: Employee[] }) {
-  const active = employees.filter((e) => e.active).length
+export function StatCards({ total, active, deactivated }: { total: number; active: number; deactivated: number }) {
   const stats = [
-    { label: 'Total users', value: employees.length },
+    { label: 'Total users', value: total },
     { label: 'Active', value: active },
-    { label: 'Deactivated', value: employees.length - active },
+    { label: 'Deactivated', value: deactivated },
   ]
   return (
     <dl className="grid grid-cols-3 divide-x rounded-lg border bg-card">

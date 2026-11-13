@@ -3,8 +3,9 @@ import { useTheme } from 'next-themes'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Cell, Label as ChartLabel, Pie, PieChart } from 'recharts'
-import { toast } from 'sonner'
+import { useEmployeeId } from '@/components/auth/session-context'
 import PageHeader from '@/components/PageHeader'
+import LoadError from '@/components/LoadError'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
@@ -15,7 +16,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { employeeApi } from '@/lib/employee/api'
 import { formatDate, formatHours, formatMoney, MONTHS, toISODate } from '@/lib/employee/dates'
 import { PAY_SLICES, totalDeductions } from '@/lib/employee/pay'
-import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { AggregatePay, Granularity, PayStubSummary } from '@/lib/employee/types'
 
 const THIS_YEAR = new Date().getFullYear()
@@ -26,37 +26,41 @@ const chartConfig = Object.fromEntries(
 ) satisfies ChartConfig
 
 export default function DashboardPage() {
+  const employeeId = useEmployeeId()
   const [year, setYear] = useState(THIS_YEAR)
   const [granularity, setGranularity] = useState<Granularity>('ytd')
   const [periodLabel, setPeriodLabel] = useState<string>('')
   const [data, setData] = useState<AggregatePay | null>(null)
   const [recent, setRecent] = useState<PayStubSummary[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0) // bumped by "Try again"
   const dark = useTheme().resolvedTheme === 'dark'
 
   useEffect(() => {
     let cancelled = false
     setData(null)
+    setLoadError(null)
     employeeApi
-      .getAggregatePay(CURRENT_EMPLOYEE_ID, year, granularity)
+      .getAggregatePay(employeeId, year, granularity)
       .then((d) => {
         if (cancelled) return
         setData(d)
         // Default to the most recent period that has pay.
         setPeriodLabel((cur) => (d.periods.some((p) => p.label === cur) ? cur : d.periods.at(-1)?.label ?? ''))
       })
-      .catch((e) => toast.error(`Couldn't load pay summary: ${e.message}`))
+      .catch((e: Error) => !cancelled && setLoadError(e.message))
     return () => {
       cancelled = true
     }
-  }, [year, granularity])
+  }, [employeeId, year, granularity, attempt])
 
   useEffect(() => {
     const today = new Date()
     employeeApi
-      .getPayStubs(CURRENT_EMPLOYEE_ID, toISODate(new Date(today.getFullYear(), today.getMonth() - 3, 1)), toISODate(today))
+      .getPayStubs(employeeId, toISODate(new Date(today.getFullYear(), today.getMonth() - 3, 1)), toISODate(today))
       .then((s) => setRecent(s.slice(0, 4)))
       .catch(() => {})
-  }, [])
+  }, [employeeId])
 
   const period = data?.periods.find((p) => p.label === periodLabel) ?? data?.periods.at(-1)
   const periodOptions =
@@ -103,7 +107,9 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {!data ? (
+      {loadError ? (
+        <LoadError title="Couldn't load your pay summary" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
+      ) : !data ? (
         <div className="grid gap-4"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>
       ) : !period ? (
         <Card><CardContent className="py-10 text-center text-muted-foreground">No pay recorded for {year}.</CardContent></Card>
@@ -209,10 +215,11 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 /** For YTD the table fetches monthly rows so there's still a breakdown to read. */
 function BreakdownTable({ data, selected, onSelect, year }: { data: AggregatePay; selected: string; onSelect?: (l: string) => void; year: number }) {
+  const employeeId = useEmployeeId()
   const [monthly, setMonthly] = useState<AggregatePay | null>(null)
   useEffect(() => {
-    if (data.granularity === 'ytd') employeeApi.getAggregatePay(CURRENT_EMPLOYEE_ID, year, 'monthly').then(setMonthly).catch(() => {})
-  }, [data.granularity, year])
+    if (data.granularity === 'ytd') employeeApi.getAggregatePay(employeeId, year, 'monthly').then(setMonthly).catch(() => {})
+  }, [employeeId, data.granularity, year])
   const rows = data.granularity === 'ytd' ? monthly?.periods ?? [] : data.periods
   const sum = (f: (p: (typeof rows)[number]) => number) => rows.reduce((n, p) => n + f(p), 0)
 

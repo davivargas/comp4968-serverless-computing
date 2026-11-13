@@ -4,8 +4,8 @@
 const ALLOWED = /^[\d\s().+-]*$/
 
 /** The 10 significant digits, with any leading country code 1 dropped. */
-export function phoneDigits(input: string) {
-  const digits = input.replace(/\D/g, '')
+export function phoneDigits(input: string | null | undefined) {
+  const digits = (input ?? '').replace(/\D/g, '')
   return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
 }
 
@@ -29,9 +29,9 @@ export function validatePhone(input: string): string | null {
 }
 
 /** (604) 555-0142, for showing a valid number. */
-export const formatPhone = (input: string) => {
+export const formatPhone = (input: string | null | undefined) => {
   const d = phoneDigits(input)
-  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : input
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (input ?? '')
 }
 
 /** +16045550142 (E.164), the format sent to and stored by the backend. Cognito's phone_number uses it too. */

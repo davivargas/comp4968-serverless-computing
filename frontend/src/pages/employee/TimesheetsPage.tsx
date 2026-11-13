@@ -1,7 +1,9 @@
 import { CheckCircle2, ChevronLeft, ChevronRight, Lock, Plus, Save, Send, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useEmployeeId } from '@/components/auth/session-context'
 import PageHeader from '@/components/PageHeader'
+import LoadError from '@/components/LoadError'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,7 +15,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { employeeApi } from '@/lib/employee/api'
 import { addDays, entryHours, formatDate, formatHours, fromISODate, minutesOf, startOfWeek, toISODate } from '@/lib/employee/dates'
-import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
 import type { NewTimesheetEntry, PayPeriod, Project, TimesheetEntry } from '@/lib/employee/types'
 import { cn } from '@/lib/utils'
 
@@ -22,7 +23,6 @@ type Row = NewTimesheetEntry & { key: string; saved?: TimesheetEntry }
 type Draft = NewTimesheetEntry & { draftId: string }
 type Editing = { date: string; row?: Row } | null
 
-const EMP = CURRENT_EMPLOYEE_ID
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /** True when an arrow key on this element already means something (text fields, menus, dialogs, tabs). */
@@ -46,6 +46,7 @@ function periodWeeks(period: PayPeriod): (Date | null)[][] {
 }
 
 export default function TimesheetsPage() {
+  const EMP = useEmployeeId()
   /** Which period to show: undefined = current (as the API defines it), else any date inside it. */
   const [periodDate, setPeriodDate] = useState<string | undefined>(undefined)
   const [period, setPeriod] = useState<PayPeriod | null>(null)
@@ -54,6 +55,8 @@ export default function TimesheetsPage() {
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [pendingDeletes, setPendingDeletes] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0) // bumped by "Try again"
   const [busy, setBusy] = useState<'save' | 'submit' | null>(null)
   const [editing, setEditing] = useState<Editing>(null)
   const [confirmSubmit, setConfirmSubmit] = useState(false)
@@ -63,12 +66,13 @@ export default function TimesheetsPage() {
 
   useEffect(() => {
     employeeApi.getProjects(EMP).then(setProjects).catch((e) => toast.error(`Couldn't load projects: ${e.message}`))
-  }, [])
+  }, [EMP])
 
   // The backend decides the period boundaries and whether it's open for changes.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setLoadError(null)
     employeeApi
       .getPayPeriod(EMP, periodDate)
       .then(async (p) => {
@@ -77,12 +81,12 @@ export default function TimesheetsPage() {
         setPeriod(p)
         setSaved(entries)
       })
-      .catch((e) => toast.error(`Couldn't load timesheets: ${e.message}`))
+      .catch((e: Error) => !cancelled && setLoadError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [periodDate])
+  }, [EMP, periodDate, attempt])
 
   const rows: Row[] = useMemo(
     () =>
@@ -180,6 +184,15 @@ export default function TimesheetsPage() {
       }
     }
     setBusy(null)
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-7xl">
+        <PageHeader title="Timesheets" />
+        <LoadError title="Couldn't load your timesheet" message={loadError} onRetry={() => setAttempt((n) => n + 1)} />
+      </div>
+    )
   }
 
   if (!period) {

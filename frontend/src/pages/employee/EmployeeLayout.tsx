@@ -1,6 +1,6 @@
 import { CalendarClock, FileText, LayoutDashboard, LogOut, UserRound } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useSession } from '@/components/auth/session-context'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -10,8 +10,7 @@ import {
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { APP_NAME } from '@/lib/brand'
-import { employeeApi, usingMockApi } from '@/lib/employee/api'
-import { CURRENT_EMPLOYEE_ID } from '@/lib/employee/session'
+import { usingMockApi } from '@/lib/employee/api'
 
 const NAV = [
   { to: '/employee/timesheets', label: 'Timesheets', icon: CalendarClock },
@@ -23,11 +22,8 @@ const NAV = [
 export default function EmployeeLayout() {
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
-  const [firstName, setFirstName] = useState<string | null>(null)
-
-  useEffect(() => {
-    employeeApi.getProfile(CURRENT_EMPLOYEE_ID).then((p) => setFirstName(p.firstName)).catch(() => {})
-  }, [])
+  const { me, signOut } = useSession()
+  const firstName = me?.firstName
 
   return (
     <TooltipProvider>
@@ -69,11 +65,9 @@ export default function EmployeeLayout() {
           <SidebarFooter>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Sign out">
-                  <Link to="/">
-                    <LogOut />
-                    <span>Sign out</span>
-                  </Link>
+                <SidebarMenuButton tooltip="Sign out" onClick={signOut}>
+                  <LogOut />
+                  <span>Sign out</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

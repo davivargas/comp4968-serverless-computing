@@ -58,9 +58,10 @@ export interface EmployeeProfile {
   position: string
   payGrade: string
   hourlyRate: number
-  phone: string
-  address: Address
-  directDeposit: DirectDeposit
+  // The backend sends null for details the employee hasn't filled in yet.
+  phone: string | null
+  address: Address | null
+  directDeposit: DirectDeposit | null
 }
 
 /** PATCH body: send only what changed. Omit directDeposit.accountNumber to keep the current account. */

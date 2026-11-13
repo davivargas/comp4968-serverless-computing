@@ -1,21 +1,38 @@
-# IT Admin API (proposed)
+# IT Admin API
 
 Contract the IT portal (`frontend/src/pages/it`) is built against. TypeScript shapes live in
 [`frontend/src/lib/it/types.ts`](../frontend/src/lib/it/types.ts); the client is
 [`api.ts`](../frontend/src/lib/it/api.ts). Until `VITE_API_BASE_URL` is set, the frontend uses an
-in-browser mock ([`mock.ts`](../frontend/src/lib/it/mock.ts)) that behaves like this API.
+in-browser mock ([`mock.ts`](../frontend/src/lib/it/mock.ts)) that enforces the same rules and errors.
 
-Conventions are the same as the [employee API](./employee-api.md). Every endpoint must check that the caller
-is in the IT Admin group. Passwords are never returned by any endpoint.
+Conventions are the same as the [employee API](./employee-api.md). Every call sends `X-Active-Role: IT`.
+Passwords are never returned. Errors are non-2xx with a message the UI shows as-is.
 
-| Method | Path | Body | Notes |
+Roles: `EMPLOYEE`, `MANAGER`, `PAYROLL_ADMIN`, `IT`. Everyone is an employee and has at most one extra role.
+Account status: `ACTIVE`, `DEACTIVATED`.
+
+A **user** is `{ employeeId, firstName, lastName, email, phone, address | null, status, hireDate, role,
+positionId, position, teamId, team, managerId, managerName }`. A user's manager is their team's manager;
+the topmost person has `teamId`, `managerId` and the team fields `null`.
+
+## Endpoints
+
+| Method | Path | Request | Notes |
 |---|---|---|---|
-| GET | `/it/employees` | | `{ "employees": Employee[] }`: id, name, email, title, role, active, managerId, managerName |
-| POST | `/it/employees` | `CreateAccountInput` | Creates the account; returns the new `Employee` |
-| PATCH | `/it/employees/{id}/role` | `{ role, adminPassword? }` | `adminPassword` (the caller's own) is required when granting or removing `IT_ADMIN`; the backend must verify it |
-| PATCH | `/it/employees/{id}/title` | `{ title }` | Job title/level, display only |
-| PATCH | `/it/employees/{id}/status` | `{ active }` | Deactivating should also revoke the user's sessions |
-| PATCH | `/it/employees/{id}/credentials` | `{ email?, password? }` | Change either or both |
+| GET | `/me` | | `{ employeeId, firstName, lastName, availableRoles }` |
+| GET | `/it/users` | query (all optional): `status`, `role`, `teamId`, `search` (name or email), `sort` (`id`\|`name`\|`email`), `order`, `limit` (1-200, default 50), `offset` | `{ total, limit, offset, users }` |
+| GET | `/it/users/{id}` | | 404 if not found |
+| POST | `/it/create-account` | `{ firstName, lastName, email, positionId, hireDate, phone?, address?, teamId?, role? }` | 201 with the user. 409 email used; 400 position or team does not exist. Omit `teamId` for the topmost person. Cognito emails an invite, so there is no password field |
+| PATCH | `/it/users/{id}` | any of `{ firstName, lastName, email, phone (null clears), address, positionId, teamId (null = topmost) }` | Changing the email also changes it in Cognito. 409 email used; 400 position or team does not exist |
+| PATCH | `/it/users/{id}/status` | `{ status }` | 400 deactivating your own account; 409 deactivating a manager whose team still has members |
+| PATCH | `/it/users/{id}/role` | `{ role }` (`EMPLOYEE` or `null` = no extra role) | 400 changing your own role; 409 removing Manager from someone who still manages a team |
+| POST | `/it/users/{id}/reset-password` | | Cognito emails a reset code. 409 if deactivated. `{ message }` |
+| GET | `/it/teams` | | `{ teams: [{ teamId, name, managerId, managerName, memberCount }] }` |
+| POST | `/it/teams` | `{ name, managerId }` | 201 with the team. 400 manager is not a Manager; 409 name taken |
+| PATCH | `/it/teams/{id}` | any of `{ name, managerId, isDeleted: true }` | `isDeleted` soft deletes (204). 409 while employees are in the team; 404 if already deleted |
+| GET | `/it/positions` | | `{ positions: [{ positionId, title, payGrade }] }`, no wages |
 
-`role` is the access role: `EMPLOYEE`, `MANAGER`, `PAYROLL_ADMIN` or `IT_ADMIN`. `title` is the job title
-(for example "Software Engineer 2"), shown for display and independent of access.
+## Open questions for the backend
+
+- **IDs:** the frontend treats `employeeId` as a string and `teamId` / `positionId` as numbers.
+- **Admin password:** the UI no longer asks IT for their own password on role changes, because no endpoint accepts it.

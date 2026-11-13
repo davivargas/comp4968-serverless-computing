@@ -128,3 +128,20 @@
     @apply font-sans;
     }
 }
+/* Loading clock: a pogo hop (squash on landing, stretch on take-off) and its floor shadow. */
+@theme {
+  --animate-pogo: pogo 0.9s infinite;
+  --animate-pogo-shadow: pogo-shadow 0.9s infinite;
+
+  @keyframes pogo {
+    0%, 100% { transform: translateY(0) scale(1.14, 0.82); animation-timing-function: ease-out; }
+    14% { transform: translateY(-6px) scale(0.9, 1.12); animation-timing-function: ease-out; }
+    50% { transform: translateY(-40px) scale(1, 1); animation-timing-function: ease-in; }
+    86% { transform: translateY(-5px) scale(0.94, 1.08); animation-timing-function: ease-in; }
+  }
+
+  @keyframes pogo-shadow {
+    0%, 100% { transform: scaleX(1); opacity: 1; animation-timing-function: ease-out; }
+    50% { transform: scaleX(0.5); opacity: 0.4; animation-timing-function: ease-in; }
+  }
+}
