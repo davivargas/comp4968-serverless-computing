@@ -374,6 +374,53 @@ def generate_paystubs(
         created_paystubs.append(paystub)
 
     return created_paystubs
+
+def release(event, request_context):
+    """PATCH /pa/payroll/{id}/release"""
+
+    pay_period_id = path_id(event)
+
+    with transaction() as connection:
+        pay_period = validate_pay_period(
+            connection, pay_period_id
+        )
+
+        validate_timesheets(connection, pay_period)
+
+        employees, wages_by_position_id = load_payroll_employees(
+            connection, pay_period
+        )
+
+        daily_entries_by_employee_id = load_employee_earnings(
+            connection, pay_period
+        )
+
+        year_to_date_by_employee_id = load_ytd_totals(
+            connection, pay_period
+        )
+
+        created_paystubs = generate_paystubs(
+            connection,
+            request_context,
+            pay_period,
+            employees,
+            wages_by_position_id,
+            daily_entries_by_employee_id,
+            year_to_date_by_employee_id
+        )
+
+        finalize_payroll_release(
+            connection,
+            pay_period_id,
+            request_context
+        )
+
+    return {
+        "payPeriodId": pay_period_id,
+        "status": "RELEASED",
+        "paystubsCreated": len(created_paystubs),
+        "paystubs": created_paystubs
+    }
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
