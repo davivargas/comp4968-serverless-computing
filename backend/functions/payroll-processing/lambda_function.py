@@ -312,6 +312,37 @@ def create_employee_paystub(
         "net": paystub_calculation["net_pay"]
     }
     
+def finalize_payroll_release(
+    connection,
+    pay_period_id,
+    request_context
+):
+    """Finalize the release of the payroll for the given pay period."""
+    query(
+        connection,
+        """
+        UPDATE pay_period
+        SET status = 'RELEASED',
+            released_by = %s,
+            released_at = now()
+        WHERE pay_period_id = %s
+        """,
+        (request_context["employee_id"], pay_period_id)
+    )
+
+    audit(
+        connection,
+        request_context,
+        "pay_period",
+        pay_period_id,
+        "UPDATE",
+        {"status": "OPEN"},
+        {
+            "status": "RELEASED",
+            "released_by": request_context["employee_id"]
+        }
+    )
+    
     
 def generate_paystubs(
     connection,
