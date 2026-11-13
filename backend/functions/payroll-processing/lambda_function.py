@@ -199,6 +199,7 @@ def load_ytd_totals(connection, pay_period):
         for row in year_to_date_rows
     }
     
+    
 def create_employee_paystub(
     connection,
     request_context,
@@ -310,6 +311,38 @@ def create_employee_paystub(
         "gross": paystub_calculation["gross_pay"],
         "net": paystub_calculation["net_pay"]
     }
+    
+    
+def generate_paystubs(
+    connection,
+    request_context,
+    pay_period,
+    employees,
+    wages_by_position_id,
+    daily_entries_by_employee_id,
+    year_to_date_by_employee_id
+):
+    """Generate paystubs for all employees for the given pay period."""
+    payroll_year = pay_period["pay_date"].year
+    payroll_rates = payroll.rates_for(payroll_year)
+
+    created_paystubs = []
+
+    for employee in employees:
+        paystub = create_employee_paystub(
+            connection,
+            request_context,
+            pay_period,
+            employee,
+            wages_by_position_id,
+            daily_entries_by_employee_id,
+            year_to_date_by_employee_id,
+            payroll_rates
+        )
+
+        created_paystubs.append(paystub)
+
+    return created_paystubs
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
