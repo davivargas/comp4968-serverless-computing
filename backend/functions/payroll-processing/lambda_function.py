@@ -168,6 +168,36 @@ def load_employee_earnings(connection, pay_period):
         ].append(daily_entry)
 
     return daily_entries_by_employee_id
+
+def load_ytd_totals(connection, pay_period):
+    """Load and return year-to-date totals for each employee up to the start of the given pay period."""
+    payroll_year = pay_period["pay_date"].year
+
+    year_to_date_rows = query(
+        connection,
+        """
+        SELECT paystub.employee_id,
+               SUM(regular_hours + overtime_hours + double_overtime_hours) AS total_hours,
+               SUM(gross_pay) AS gross_pay,
+               SUM(cpp) AS cpp,
+               SUM(ei) AS ei,
+               SUM(federal_tax) AS federal_tax,
+               SUM(provincial_tax) AS provincial_tax,
+               SUM(net_pay) AS net_pay
+        FROM paystub
+        JOIN pay_period
+            ON pay_period.pay_period_id = paystub.pay_period_id
+        WHERE pay_period.start_date < %s
+          AND EXTRACT(YEAR FROM pay_period.pay_date) = %s
+        GROUP BY paystub.employee_id
+        """,
+        (pay_period["start_date"], payroll_year)
+    )
+
+    return {
+        row["employee_id"]: row
+        for row in year_to_date_rows
+    }
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
