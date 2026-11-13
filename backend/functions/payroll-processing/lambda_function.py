@@ -198,6 +198,118 @@ def load_ytd_totals(connection, pay_period):
         row["employee_id"]: row
         for row in year_to_date_rows
     }
+    
+def create_employee_paystub(
+    connection,
+    request_context,
+    pay_period,
+    employee,
+    wages_by_position_id,
+    daily_entries_by_employee_id,
+    year_to_date_by_employee_id,
+    payroll_rates
+):
+    """Create a paystub for the given employee and pay period."""
+    employee_id = employee["employee_id"]
+
+    employee_year_to_date = year_to_date_by_employee_id.get(
+        employee_id, {}
+    )
+
+    year_to_date_totals = {
+        "hours": employee_year_to_date.get("total_hours") or 0,
+        "gross": employee_year_to_date.get("gross_pay") or 0,
+        "cpp": employee_year_to_date.get("cpp") or 0,
+        "ei": employee_year_to_date.get("ei") or 0,
+        "federal": employee_year_to_date.get("federal_tax") or 0,
+        "provincial": employee_year_to_date.get("provincial_tax") or 0,
+        "net": employee_year_to_date.get("net_pay") or 0,
+    }
+
+    earning_entries = [
+        {
+            "date": daily_entry["work_date"],
+            "project_id": daily_entry["project_id"],
+            "project_code": daily_entry["project_code"],
+            "minutes": daily_entry["minutes"],
+            "rate": payroll.wage_for(
+                wages_by_position_id[employee["position_id"]],
+                daily_entry["work_date"]
+            )
+        }
+        for daily_entry in daily_entries_by_employee_id[employee_id]
+    ]
+
+    paystub_calculation = payroll.calculate_paystub(
+        earning_entries,
+        pay_period["start_date"],
+        payroll.vacation_rate_for(
+            employee["hire_date"],
+            pay_period["end_date"]
+        ),
+        year_to_date_totals,
+        payroll_rates
+    )
+
+    earning_lines = paystub_calculation.pop("earnings")
+
+    paystub_row = {
+        "employee_id": employee_id,
+        "pay_period_id": pay_period["pay_period_id"],
+        "employee_name": employee["employee_name"],
+        "position_title": employee["title"],
+        "deposit_account_last4": employee["account_last4"],
+        **paystub_calculation
+    }
+
+    column_names = list(paystub_row)
+
+    inserted_paystub = one(
+        connection,
+        f"""
+        INSERT INTO paystub ({', '.join(column_names)})
+        VALUES ({', '.join(['%s'] * len(column_names))})
+        RETURNING paystub_id
+        """,
+        [paystub_row[column_name] for column_name in column_names]
+    )
+
+    for earning_line in earning_lines:
+        query(
+            connection,
+            """
+            INSERT INTO paystub_earning
+                (paystub_id, line_type, project_id,
+                 project_code, hours, rate, amount)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                inserted_paystub["paystub_id"],
+                earning_line["line_type"],
+                earning_line["project_id"],
+                earning_line["project_code"],
+                earning_line["hours"],
+                earning_line["rate"],
+                earning_line["amount"]
+            )
+        )
+
+    audit(
+        connection,
+        request_context,
+        "paystub",
+        inserted_paystub["paystub_id"],
+        "INSERT",
+        None,
+        paystub_row
+    )
+
+    return {
+        "paystubId": inserted_paystub["paystub_id"],
+        "employeeId": employee_id,
+        "gross": paystub_calculation["gross_pay"],
+        "net": paystub_calculation["net_pay"]
+    }
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
