@@ -119,6 +119,7 @@ def load_payroll_employees(connection, pay_period):
 
     return employees
 
+
 def load_and_validate_wages(connection, employees):
     wages_by_position_id = payroll.load_wages(
         connection,
@@ -133,6 +134,40 @@ def load_and_validate_wages(connection, employees):
             )
 
     return wages_by_position_id
+
+def load_employee_earnings(connection, pay_period):
+    """Load and return daily work entries grouped by employee ID for the given pay period."""
+    daily_work_entries = query(
+        connection,
+        """
+        SELECT timesheet_entry.employee_id,
+               timesheet_entry.work_date,
+               project.project_id,
+               project.project_code,
+               (SUM(EXTRACT(EPOCH FROM (
+                   timesheet_entry.end_time - timesheet_entry.start_time
+               ))) / 60)::int AS minutes
+        FROM timesheet_entry
+        JOIN project
+            ON project.project_id = timesheet_entry.project_id
+        WHERE NOT timesheet_entry.is_deleted
+          AND timesheet_entry.work_date BETWEEN %s AND %s
+        GROUP BY timesheet_entry.employee_id,
+                 timesheet_entry.work_date,
+                 project.project_id,
+                 project.project_code
+        """,
+        (pay_period["start_date"], pay_period["end_date"])
+    )
+
+    daily_entries_by_employee_id = defaultdict(list)
+
+    for daily_entry in daily_work_entries:
+        daily_entries_by_employee_id[
+            daily_entry["employee_id"]
+        ].append(daily_entry)
+
+    return daily_entries_by_employee_id
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
