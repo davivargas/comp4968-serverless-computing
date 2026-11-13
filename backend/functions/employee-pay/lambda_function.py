@@ -2,11 +2,13 @@
 import calendar
 import datetime
 
-from payroll_common.auth import assert_self
+from payroll_common.auth import assert_self, with_auth
 from payroll_common.db import get_conn, one, query
-from payroll_common.http_utils import HttpError, qs
+from payroll_common.http_utils import HttpError, qs, router
 from payroll_common.payroll import deductions_json, mask, today_bc
 from payroll_common.validate import one_of, opt_date, opt_int, path_id, require_date
+
+EMP = ["EMPLOYEE"]
 
 # SQL group key per granularity (whitelist - never built from user input)
 GROUP = {"monthly": "date_trunc('month', pp.pay_date)::date", "quarterly": "date_trunc('quarter', pp.pay_date)::date", "ytd": "DATE '1900-01-01'"}
@@ -91,3 +93,10 @@ def get_stub(event, ctx):
                 "deductions": deductions_json(paystub, "ytd_"), "net": paystub["ytd_net"]},
         "depositAccount": mask(paystub["deposit_account_last4"]),
     }
+    
+    
+lambda_handler = router({
+    "GET /employee/{id}/aggregate-pay": with_auth(EMP, aggregate_pay),
+    "GET /employee/{id}/pay-stubs": with_auth(EMP, list_stubs),
+    "GET /employee/{id}/pay-stubs/{payDate}": with_auth(EMP, get_stub),
+})
