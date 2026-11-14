@@ -5,9 +5,9 @@ import boto3
 from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
-from payroll_common.http_utils import HttpError, created, parse_body, qs, router
-from payroll_common.validate import (address, address_json, bad, one_of, opt_int, order_by, paging, path_id, phone_e164, require_date,
-                                     require_email, require_int, require_str)
+from payroll_common.http_utils import HttpError, created, no_content, parse_body, qs, router
+from payroll_common.validate import (address, address_json, bad, one_of, opt_int, opt_str, order_by, paging, path_id, phone_e164,
+                                     require_bool_true, require_date, require_email, require_int, require_str)
 
 IT = ["IT"]
 ELEVATED = ["MANAGER", "PAYROLL_ADMIN", "IT"]
@@ -283,6 +283,37 @@ def create_team(event, ctx):
         return created(team_json(one(conn, f"{TEAM_SELECT} WHERE t.team_id = %s", (row["team_id"],))))
 
 
+def update_team(event, ctx):
+    """PATCH /it/teams/{id}  any of {name, managerId, isDeleted: true}"""
+    tid, b, ch = path_id(event), parse_body(event), {}
+    if "name" in b:
+        ch["name"] = require_str(b["name"], "name", 100)
+    if "managerId" in b:
+        ch["manager_id"] = require_int(b["managerId"], "managerId")
+    deleting = "isDeleted" in b and require_bool_true(b["isDeleted"], "isDeleted")
+    if not ch and not deleting:
+        bad("No updatable fields supplied")
+    with transaction() as conn:
+        old = one(conn, "SELECT * FROM team WHERE team_id = %s AND NOT is_deleted FOR UPDATE", (tid,))
+        if not old:
+            raise HttpError(404, "Team not found")
+        if deleting and one(conn, "SELECT 1 AS x FROM employee WHERE team_id = %s", (tid,)):
+            raise HttpError(409, "This team still has members; move them to another team first")
+        if "manager_id" in ch:
+            check_manager(conn, ch["manager_id"])
+        if "name" in ch and one(conn, "SELECT 1 AS x FROM team WHERE lower(name) = lower(%s) AND NOT is_deleted AND team_id <> %s", (ch["name"], tid)):
+            raise HttpError(409, "A team with that name already exists")
+        if ch:
+            cols = list(ch)
+            query(conn, f"UPDATE team SET {', '.join(c + ' = %s' for c in cols)} WHERE team_id = %s", [ch[c] for c in cols] + [tid])
+            audit(conn, ctx, "team", tid, "UPDATE", {c: old[c] for c in cols}, ch)
+        if deleting:
+            query(conn, "UPDATE team SET is_deleted = true WHERE team_id = %s", (tid,))
+            audit(conn, ctx, "team", tid, "DELETE", {"is_deleted": False}, {"is_deleted": True})
+            return no_content()
+        return team_json(one(conn, f"{TEAM_SELECT} WHERE t.team_id = %s", (tid,)))
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
@@ -293,4 +324,5 @@ lambda_handler = router({
     "PATCH /it/users/{id}/role": with_auth(IT, set_role),
     "GET /it/teams": with_auth(IT, list_teams),
     "POST /it/teams": with_auth(IT, create_team),
+    "PATCH /it/teams/{id}": with_auth(IT, update_team),
 })
