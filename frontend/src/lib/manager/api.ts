@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import { CURRENT_MANAGER } from './session'
@@ -21,7 +22,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
     method, headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'MANAGER', ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`)
+  if (!response.ok) throw await apiError(response)
   return response.status === 204 ? undefined as T : response.json()
 }
 const httpApi: ManagerApi = {

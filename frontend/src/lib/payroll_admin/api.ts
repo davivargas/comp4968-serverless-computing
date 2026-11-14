@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type { CreatePositionInput, EmployeeFilters, EmployeeRecord, PayPeriod, PayrollEmployee, Position } from './types'
@@ -26,7 +27,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // The backend checks X-Active-Role against the signed-in user's roles; /pa routes need PAYROLL_ADMIN.
     headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'PAYROLL_ADMIN', ...authHeaders(), ...init?.headers },
   })
-  if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`)
+  if (!response.ok) throw await apiError(response)
   return response.status === 204 ? (undefined as T) : response.json()
 }
 const send = (method: string, body: unknown) => ({ method, body: JSON.stringify(body) })

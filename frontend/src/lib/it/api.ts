@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type {
@@ -40,12 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
   })
-  if (!res.ok) {
-    const text = await res.text()
-    let message = text
-    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
-    throw new Error(message || `${res.status} ${res.statusText}`)
-  }
+  if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()
 }
 

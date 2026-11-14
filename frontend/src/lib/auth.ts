@@ -1,5 +1,6 @@
 // Cognito sign-in shared by every portal. Sign-in is only required when the app talks to the real
 // API (VITE_API_BASE_URL set); with the in-browser mocks there is nothing to protect.
+import { apiError } from '@/lib/api-error'
 import { User, WebStorageStateStore, type UserManagerSettings } from 'oidc-client-ts'
 
 export type Role = 'EMPLOYEE' | 'MANAGER' | 'PAYROLL_ADMIN' | 'IT'
@@ -73,12 +74,7 @@ export function signOutEverywhere() {
 export async function fetchMe(): Promise<Me> {
   // Everyone holds EMPLOYEE, so it's always a valid role to ask with.
   const res = await fetch(`${API_BASE_URL}/me`, { headers: { ...authHeaders(), 'X-Active-Role': 'EMPLOYEE' } })
-  if (!res.ok) {
-    const text = await res.text()
-    let message = text
-    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
-    throw new Error(message || `${res.status} ${res.statusText}`)
-  }
+  if (!res.ok) throw await apiError(res)
   const me = (await res.json()) as Omit<Me, 'employeeId'> & { employeeId: string | number }
   return { ...me, employeeId: String(me.employeeId) }
 }
