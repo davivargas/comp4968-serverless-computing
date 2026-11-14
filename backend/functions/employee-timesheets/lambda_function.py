@@ -104,9 +104,39 @@ def delete_entry(event, ctx):
     return no_content()
 
 
+def submit_period(event, ctx):
+    """PATCH /employee/{id}/timesheets/submit  body {from, to}  - submits every unsubmitted entry in the range.
+    The range must sit inside one open pay period. The topmost person (no team, so no manager) is approved automatically."""
+    emp_id = path_id(event)
+    assert_self(ctx, emp_id)
+    b = parse_body(event)
+    frm, to = require_date(b.get("from"), "from"), require_date(b.get("to"), "to")
+    if to < frm:
+        bad("to must not be before from")
+    with transaction() as conn:
+        p1, p2 = assert_date_editable(conn, frm), assert_date_editable(conn, to)
+        if p1["pay_period_id"] != p2["pay_period_id"]:
+            raise HttpError(409, "from and to must be inside the same pay period")
+        drafts = query(conn, """SELECT timesheet_id FROM timesheet_entry WHERE employee_id = %s AND NOT is_deleted AND NOT submitted
+                                   AND work_date BETWEEN %s AND %s FOR UPDATE""", (emp_id, frm, to))
+        if not drafts:
+            raise HttpError(409, "There are no unsubmitted entries in that range")
+        topmost = one(conn, "SELECT team_id FROM employee WHERE employee_id = %s", (emp_id,))["team_id"] is None
+        ids = [d["timesheet_id"] for d in drafts]
+        query(conn, """UPDATE timesheet_entry SET submitted = true, submitted_at = now(), approved = %s, reviewed_by = NULL,
+                          reviewed_at = CASE WHEN %s THEN now() END, updated_at = now() WHERE timesheet_id = ANY(%s)""",
+              (topmost, topmost, ids))
+        for tid in ids:
+            audit(conn, ctx, "timesheet_entry", tid, "UPDATE", {"submitted": False}, {"submitted": True, "approved": topmost})
+        rows = query(conn, f"""{ENTRY_SELECT} WHERE t.employee_id = %s AND NOT t.is_deleted AND t.work_date BETWEEN %s AND %s
+                                ORDER BY t.work_date, t.start_time""", (emp_id, frm, to))
+    return {"entries": [entry_json(r) for r in rows]}
+
+
 lambda_handler = router({
     "GET /employee/{id}/pay-period": with_auth(EMP, pay_period),
     "GET /employee/{id}/timesheets": with_auth(EMP, list_entries),
     "POST /employee/{id}/timesheets": with_auth(EMP, create_entries),
     "DELETE /employee/{id}/timesheets/{timesheetId}": with_auth(EMP, delete_entry),
+    "PATCH /employee/{id}/timesheets/submit": with_auth(EMP, submit_period),
 })
