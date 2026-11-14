@@ -1,6 +1,7 @@
-import { CalendarClock, FileText, LayoutDashboard, LogOut, UserRound } from 'lucide-react'
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import AccountMenu from '@/components/auth/AccountMenu'
 import { useSession } from '@/components/auth/session-context'
+import { CalendarClock, FileText, LayoutDashboard, UserRound } from 'lucide-react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -24,7 +25,7 @@ const NAV = [
 export default function EmployeeLayout() {
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
-  const { me, signOut } = useSession()
+  const { me } = useSession()
   const firstName = me?.firstName
 
   return (
@@ -65,14 +66,7 @@ export default function EmployeeLayout() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Sign out" onClick={signOut}>
-                  <LogOut />
-                  <span>Sign out</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <AccountMenu />
           </SidebarFooter>
           <SidebarRail />
         </Sidebar>

@@ -1,4 +1,5 @@
-import { ClipboardCheck, FolderKanban, LayoutDashboard, LogOut, Users } from 'lucide-react'
+import AccountMenu from '@/components/auth/AccountMenu'
+import { ClipboardCheck, FolderKanban, LayoutDashboard, Users } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -63,16 +64,7 @@ export default function ManagerLayout() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Sign out">
-                  <Link to="/">
-                    <LogOut />
-                    <span>Sign out</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <AccountMenu />
           </SidebarFooter>
           <SidebarRail />
         </Sidebar>
