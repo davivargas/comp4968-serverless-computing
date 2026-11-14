@@ -143,8 +143,23 @@ def get_one(event, ctx):
     return get_user(get_conn(), path_id(event))
 
 
+def reset_password(event, ctx):
+    """POST /it/users/{id}/reset-password  (Cognito emails the user a reset code)"""
+    emp_id = path_id(event)
+    conn = get_conn()
+    u = get_user(conn, emp_id)
+    if u["status"] != "ACTIVE":
+        raise HttpError(409, "Cannot reset the password of a deactivated account")
+    sub = one(conn, "SELECT cognito_sub FROM employee WHERE employee_id = %s", (emp_id,))["cognito_sub"]
+    cognito().admin_reset_user_password(UserPoolId=pool(), Username=sub)
+    with transaction() as c:
+        audit(c, ctx, "employee", emp_id, "UPDATE", None, {"password": "reset initiated"})
+    return {"message": "Password reset initiated"}
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
     "GET /it/users/{id}": with_auth(IT, get_one),
+    "POST /it/users/{id}/reset-password": with_auth(IT, reset_password),
 })
