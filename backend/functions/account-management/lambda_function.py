@@ -196,10 +196,39 @@ def update_user(event, ctx):
         return get_user(conn, emp_id)
 
 
+def set_status(event, ctx):
+    """PATCH /it/users/{id}/status  body {status: ACTIVE | DEACTIVATED}"""
+    emp_id = path_id(event)
+    status = one_of(parse_body(event).get("status"), "status", ["ACTIVE", "DEACTIVATED"])
+    if emp_id == ctx["employee_id"] and status == "DEACTIVATED":
+        bad("You cannot deactivate your own account")
+    with transaction() as conn:
+        old = one(conn, "SELECT status, cognito_sub FROM employee WHERE employee_id = %s FOR UPDATE", (emp_id,))
+        if not old:
+            raise HttpError(404, "User not found")
+        if old["status"] != status and status == "DEACTIVATED":
+            teams = query(conn, """SELECT t.name FROM team t WHERE t.manager_id = %s AND NOT t.is_deleted
+                                      AND EXISTS (SELECT 1 FROM employee e WHERE e.team_id = t.team_id AND e.status = 'ACTIVE')
+                                    ORDER BY t.name""", (emp_id,))
+            if teams:
+                raise HttpError(409, "This manager still has team members; give the team another manager first (PATCH /it/teams/{id})",
+                                {"teams": [t["name"] for t in teams]})
+        if old["status"] != status:
+            query(conn, "UPDATE employee SET status = %s, updated_at = now() WHERE employee_id = %s", (status, emp_id))
+            if status == "DEACTIVATED":
+                cognito().admin_disable_user(UserPoolId=pool(), Username=old["cognito_sub"])
+                cognito().admin_user_global_sign_out(UserPoolId=pool(), Username=old["cognito_sub"])
+            else:
+                cognito().admin_enable_user(UserPoolId=pool(), Username=old["cognito_sub"])
+            audit(conn, ctx, "employee", emp_id, "UPDATE", {"status": old["status"]}, {"status": status})
+        return get_user(conn, emp_id)
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
     "GET /it/users/{id}": with_auth(IT, get_one),
     "POST /it/users/{id}/reset-password": with_auth(IT, reset_password),
     "PATCH /it/users/{id}": with_auth(IT, update_user),
+    "PATCH /it/users/{id}/status": with_auth(IT, set_status),
 })
