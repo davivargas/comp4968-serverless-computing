@@ -245,6 +245,44 @@ def set_role(event, ctx):
         return get_user(conn, emp_id)
 
 
+# ---- teams (a team = department = the group of people one manager manages) -----------------------------------
+TEAM_SELECT = """SELECT t.team_id, t.name, t.manager_id, m.first_name || ' ' || m.last_name AS manager_name,
+                        (SELECT COUNT(*) FROM employee e WHERE e.team_id = t.team_id)::int AS member_count
+                   FROM team t JOIN employee m ON m.employee_id = t.manager_id"""
+
+
+def team_json(r):
+    return {"teamId": r["team_id"], "name": r["name"], "managerId": r["manager_id"], "managerName": r["manager_name"],
+            "memberCount": r["member_count"]}
+
+
+def check_manager(conn, manager_id):
+    m = one(conn, "SELECT r.name AS role FROM employee e LEFT JOIN role r ON r.role_id = e.role_id WHERE e.employee_id = %s", (manager_id,))
+    if not m:
+        raise HttpError(400, f"managerId {manager_id} does not exist")
+    if m["role"] != "MANAGER":
+        raise HttpError(400, "managerId must belong to a user with the Manager role")
+
+
+def list_teams(event, ctx):
+    """GET /it/teams - deleted teams are not listed"""
+    rows = query(get_conn(), f"{TEAM_SELECT} WHERE NOT t.is_deleted ORDER BY t.name")
+    return {"teams": [team_json(r) for r in rows]}
+
+
+def create_team(event, ctx):
+    """POST /it/teams  body {name, managerId}"""
+    b = parse_body(event)
+    name, mgr = require_str(b.get("name"), "name", 100), require_int(b.get("managerId"), "managerId")
+    with transaction() as conn:
+        check_manager(conn, mgr)
+        if one(conn, "SELECT 1 AS x FROM team WHERE lower(name) = lower(%s) AND NOT is_deleted", (name,)):
+            raise HttpError(409, "A team with that name already exists")
+        row = one(conn, "INSERT INTO team (name, manager_id) VALUES (%s, %s) RETURNING team_id", (name, mgr))
+        audit(conn, ctx, "team", row["team_id"], "INSERT", None, {"name": name, "manager_id": mgr})
+        return created(team_json(one(conn, f"{TEAM_SELECT} WHERE t.team_id = %s", (row["team_id"],))))
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
@@ -253,4 +291,6 @@ lambda_handler = router({
     "PATCH /it/users/{id}": with_auth(IT, update_user),
     "PATCH /it/users/{id}/status": with_auth(IT, set_status),
     "PATCH /it/users/{id}/role": with_auth(IT, set_role),
+    "GET /it/teams": with_auth(IT, list_teams),
+    "POST /it/teams": with_auth(IT, create_team),
 })
