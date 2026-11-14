@@ -1,4 +1,6 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
+import { MONTHS } from './dates'
 import { mockApi } from './mock'
 import type {
   AggregatePay, EmployeeProfile, Granularity, ISODate, NewTimesheetEntry, PayPeriod, PayStub, PayStubSummary,
@@ -36,13 +38,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // authHeaders() adds the Cognito ID token that API Gateway checks before any Lambda runs.
     headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
   })
-  if (!res.ok) {
-    // The Lambdas reply with { message } (400, 403, 409, ...); show that rather than raw JSON.
-    const text = await res.text()
-    let message = text
-    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
-    throw new Error(message || `${res.status} ${res.statusText}`)
-  }
+  if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()
 }
 
@@ -53,6 +49,24 @@ const qs = (params: Record<string, string | number | undefined>) => {
   return s ? `?${s}` : ''
 }
 
+/**
+ * The backend labels periods "2026-03", "2026-Q1" and "YTD"; the dashboard's dropdowns and tables use
+ * "Mar", "Q1" and "2026". Convert here so the pages work the same with the real API and the mock.
+ */
+function displayLabel(label: string, granularity: Granularity, year: number) {
+  if (granularity === 'ytd') return String(year)
+  const quarter = /Q([1-4])$/.exec(label)
+  if (granularity === 'quarterly' && quarter) return `Q${quarter[1]}`
+  const month = /-(\d{2})$/.exec(label)
+  if (granularity === 'monthly' && month) return MONTHS[Number(month[1]) - 1] ?? label
+  return label
+}
+
+export const withDisplayLabels = (data: AggregatePay): AggregatePay => ({
+  ...data,
+  periods: data.periods.map((p) => ({ ...p, label: displayLabel(p.label, data.granularity, data.year) })),
+})
+
 const httpApi: EmployeeApi = {
   getProjects: (id, search) => request<{ projects: Project[] }>(`/employee/${id}/projects${qs({ search })}`).then((r) => r.projects),
   getPayPeriod: (id, date) => request(`/employee/${id}/pay-period${qs({ date })}`),
@@ -62,7 +76,8 @@ const httpApi: EmployeeApi = {
   deleteTimesheet: (id, timesheetId) => request(`/employee/${id}/timesheets/${timesheetId}`, { method: 'DELETE' }),
   submitTimesheets: (id, from, to) =>
     request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets/submit`, { method: 'PATCH', body: JSON.stringify({ from, to }) }).then((r) => r.entries),
-  getAggregatePay: (id, year, granularity) => request(`/employee/${id}/aggregate-pay${qs({ year, granularity })}`),
+  getAggregatePay: (id, year, granularity) =>
+    request<AggregatePay>(`/employee/${id}/aggregate-pay${qs({ year, granularity })}`).then(withDisplayLabels),
   getPayStubs: (id, from, to) => request<{ payStubs: PayStubSummary[] }>(`/employee/${id}/pay-stubs${qs({ from, to })}`).then((r) => r.payStubs),
   getPayStub: (id, payDate) => request(`/employee/${id}/pay-stubs/${payDate}`),
   getProfile: (id) => request(`/employee/${id}/profile`),
