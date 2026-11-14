@@ -41,6 +41,8 @@ export default function PayStubsPage() {
       .then((all) => {
         const dates = all.map((s) => s.payDate) // newest first
         setOptions(dates)
+        // No stubs yet: there's no range to load, so show the empty state instead of loading forever.
+        if (dates.length === 0) setStubs([])
         setTo(dates[0] ?? '')
         setFrom(dates[Math.min(DEFAULT_RANGE, dates.length) - 1] ?? '')
       })
@@ -111,7 +113,9 @@ export default function PayStubsPage() {
               {!stubs ? (
                 <div className="grid gap-2">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
               ) : stubs.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">No pay stubs in this range.</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {options?.length ? 'No pay stubs in this range.' : 'No pay stubs yet. They appear here once payroll releases your first pay period.'}
+                </p>
               ) : (
                 <Table>
                   <TableHeader>
