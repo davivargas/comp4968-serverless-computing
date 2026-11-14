@@ -1,7 +1,6 @@
 // Loaded on demand (see PayStubsPage) so jsPDF stays out of the main bundle.
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { APP_NAME } from '@/lib/brand'
 import { formatDate, formatMoney } from './dates'
 import { DEDUCTION_LABELS, earningLabel, totalDeductions } from './pay'
 import type { Deductions, PayStub } from './types'
@@ -12,10 +11,8 @@ export function downloadPayStubPdf(stub: PayStub) {
   const right = doc.internal.pageSize.getWidth() - 48
 
   doc.setFont('helvetica', 'bold').setFontSize(18).text('Pay Statement', x, 60)
-  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(100)
-  doc.text(APP_NAME, right, 60, { align: 'right' })
 
-  doc.setTextColor(0).setFontSize(10)
+  doc.setFont('helvetica', 'normal').setTextColor(0).setFontSize(10)
   const meta: [string, string][] = [
     ['Employee', `${stub.employeeName} (${stub.employeeId})`],
     ['Position', stub.position],
