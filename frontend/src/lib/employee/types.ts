@@ -125,5 +125,5 @@ export interface PayStub extends PayStubSummary {
   earnings: PayStubLine[]
   deductions: Deductions
   ytd: { hours: number; gross: number; deductions: Deductions; net: number }
-  depositAccount: string // masked
+  depositAccount: string | null // masked; null when no direct deposit is on file
 }
