@@ -67,15 +67,22 @@ export const withDisplayLabels = (data: AggregatePay): AggregatePay => ({
   periods: data.periods.map((p) => ({ ...p, label: displayLabel(p.label, data.granularity, data.year) })),
 })
 
+/**
+ * The backend stores project codes as integers and sends them as JSON numbers, but the UI
+ * (Radix Select in particular) needs strings, so normalize at the boundary.
+ */
+const withStringCode = <T extends { projectCode: unknown }>(x: T): T => ({ ...x, projectCode: String(x.projectCode) })
+
 const httpApi: EmployeeApi = {
-  getProjects: (id, search) => request<{ projects: Project[] }>(`/employee/${id}/projects${qs({ search })}`).then((r) => r.projects),
+  getProjects: (id, search) =>
+    request<{ projects: Project[] }>(`/employee/${id}/projects${qs({ search })}`).then((r) => r.projects.map(withStringCode)),
   getPayPeriod: (id, date) => request(`/employee/${id}/pay-period${qs({ date })}`),
-  getTimesheets: (id, from, to) => request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets${qs({ from, to })}`).then((r) => r.entries),
+  getTimesheets: (id, from, to) => request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets${qs({ from, to })}`).then((r) => r.entries.map(withStringCode)),
   createTimesheets: (id, entries) =>
-    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets`, { method: 'POST', body: JSON.stringify({ entries }) }).then((r) => r.entries),
+    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets`, { method: 'POST', body: JSON.stringify({ entries }) }).then((r) => r.entries.map(withStringCode)),
   deleteTimesheet: (id, timesheetId) => request(`/employee/${id}/timesheets/${timesheetId}`, { method: 'DELETE' }),
   submitTimesheets: (id, from, to) =>
-    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets/submit`, { method: 'PATCH', body: JSON.stringify({ from, to }) }).then((r) => r.entries),
+    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets/submit`, { method: 'PATCH', body: JSON.stringify({ from, to }) }).then((r) => r.entries.map(withStringCode)),
   getAggregatePay: (id, year, granularity) =>
     request<AggregatePay>(`/employee/${id}/aggregate-pay${qs({ year, granularity })}`).then(withDisplayLabels),
   getPayStubs: (id, from, to) => request<{ payStubs: PayStubSummary[] }>(`/employee/${id}/pay-stubs${qs({ from, to })}`).then((r) => r.payStubs),
