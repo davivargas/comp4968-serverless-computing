@@ -36,6 +36,8 @@ export default function FullScreenMessage({ title, loading, children }: { title:
             <div className="mt-1 h-2.5 w-16 rounded-[50%] bg-black/25 blur-[3px] motion-safe:animate-pogo-shadow dark:bg-primary/45" />
           </div>
         )}
+        {/* Message screens (errors, no access) still carry the brand, just without the bounce. */}
+        {!loading && <Mascot className="mb-5 size-16" />}
         <h1 className="text-lg font-semibold">{title}</h1>
         {children && <div className="mt-2 text-sm text-muted-foreground">{children}</div>}
         {loading && <LoadingTip />}
