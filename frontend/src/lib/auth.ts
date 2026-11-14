@@ -1,7 +1,16 @@
 // Cognito sign-in shared by every portal. Sign-in is only required when the app talks to the real
 // API (VITE_API_BASE_URL set); with the in-browser mocks there is nothing to protect.
+//
+// The app signs in through its own form, calling the Cognito user pool API directly (SRP), so the pool
+// needs no hosted domain. That matters: the backend Lambdas reach Cognito through a VPC endpoint, which
+// AWS refuses for pools that have a domain.
+import { Amplify } from 'aws-amplify'
+import {
+  confirmResetPassword, confirmSignIn, fetchAuthSession, resetPassword, signIn, signOut, updatePassword,
+} from 'aws-amplify/auth'
+import { cognitoUserPoolsTokenProvider } from 'aws-amplify/auth/cognito'
+import { sessionStorage } from 'aws-amplify/utils'
 import { apiError } from '@/lib/api-error'
-import { User, WebStorageStateStore, type UserManagerSettings } from 'oidc-client-ts'
 
 export type Role = 'EMPLOYEE' | 'MANAGER' | 'PAYROLL_ADMIN' | 'IT'
 
@@ -17,63 +26,138 @@ const env = import.meta.env
 const API_BASE_URL = (env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') || undefined
 const USER_POOL_ID = env.VITE_COGNITO_USER_POOL_ID as string | undefined
 const CLIENT_ID = env.VITE_COGNITO_CLIENT_ID as string | undefined
-const DOMAIN = (env.VITE_COGNITO_DOMAIN as string | undefined)?.replace(/\/+$/, '')
 
-export const authEnabled = !!(API_BASE_URL && USER_POOL_ID && CLIENT_ID && DOMAIN)
+export const authEnabled = !!(API_BASE_URL && USER_POOL_ID && CLIENT_ID)
 
-const region = USER_POOL_ID?.split('_')[0]
-const authority = `https://cognito-idp.${region}.amazonaws.com/${USER_POOL_ID}`
-const appRoot = `${window.location.origin}/` // must match a callback URL on the Cognito app client
-
-export const oidcConfig: UserManagerSettings = {
-  authority,
-  client_id: CLIENT_ID ?? '',
-  redirect_uri: appRoot,
-  post_logout_redirect_uri: appRoot,
-  response_type: 'code', // authorization code + PKCE
-  scope: 'openid email profile',
-  userStore: new WebStorageStateStore({ store: window.sessionStorage }),
-  automaticSilentRenew: true, // uses the refresh token before the 60-minute ID token expires
+if (authEnabled) {
+  Amplify.configure({ Auth: { Cognito: { userPoolId: USER_POOL_ID!, userPoolClientId: CLIENT_ID!, loginWith: { email: true } } } })
+  // Tokens live for this tab only, like before: closing the tab signs you out.
+  cognitoUserPoolsTokenProvider.setKeyValueStorage(sessionStorage)
 }
 
-/** Where oidc-client-ts keeps the signed-in user (see userStore above). */
-const userStorageKey = `oidc.user:${authority}:${CLIENT_ID}`
-
-/** The signed-in user's ID token, read from storage so plain API modules can use it without React. */
-export function currentIdToken(): string | undefined {
+/**
+ * The signed-in user's ID token, refreshed first if it has expired (ID tokens last 60 minutes,
+ * the refresh token 12 hours). Undefined when nobody is signed in.
+ */
+export async function currentIdToken(): Promise<string | undefined> {
   if (!authEnabled) return undefined
-  const raw = window.sessionStorage.getItem(userStorageKey)
-  if (!raw) return undefined
-  const user = User.fromStorageString(raw)
-  return user.expired ? undefined : user.id_token
+  try {
+    return (await fetchAuthSession()).tokens?.idToken?.toString()
+  } catch {
+    return undefined
+  }
 }
 
 /** Added to every API call. API Gateway's Cognito authorizer reads the raw ID token (no "Bearer"). */
-export function authHeaders(): Record<string, string> {
-  const token = currentIdToken()
+export async function authHeaders(): Promise<Record<string, string>> {
+  const token = await currentIdToken()
   return token ? { Authorization: token } : {}
 }
 
-/** Cognito's hosted logout, which also ends the Cognito session so the next sign-in asks for a password. */
-const cognitoLogoutUrl = () =>
-  `${DOMAIN}/logout?client_id=${encodeURIComponent(CLIENT_ID ?? '')}&logout_uri=${encodeURIComponent(appRoot)}`
+/** What the sign-in form shows next. */
+export type SignInStep = 'done' | 'newPassword' | 'resetPassword'
 
 /**
- * Sign out of the app and of Cognito.
- *
- * The stored user is cleared directly rather than through react-oidc-context's removeUser(): that would
- * re-render the current portal as signed out, its guard would start a new sign-in, and because the
- * Cognito session is still alive it would sign straight back in before the logout redirect ran (a loop).
- * Leaving React unaware means nothing can redirect; the page unloads and comes back from Cognito signed out.
+ * Email + password sign-in. Accounts IT creates start with an emailed temporary password, so the
+ * first sign-in answers `newPassword` and the form asks for a new one ({@link completeNewPassword}).
  */
-export function signOutEverywhere() {
-  window.sessionStorage.removeItem(userStorageKey)
-  window.location.replace(cognitoLogoutUrl())
+export async function signInWithPassword(email: string, password: string): Promise<SignInStep> {
+  const attempt = () => signIn({ username: email.trim(), password })
+  let res
+  try {
+    res = await attempt()
+  } catch (e) {
+    // A leftover session from an earlier visit blocks a new sign-in: drop it and try once more.
+    if ((e as Error).name !== 'UserAlreadyAuthenticatedException') throw e
+    await signOut()
+    res = await attempt()
+  }
+  return stepOf(res.nextStep.signInStep)
+}
+
+/** Answers the first-login "choose a new password" challenge. */
+export async function completeNewPassword(newPassword: string): Promise<SignInStep> {
+  const res = await confirmSignIn({ challengeResponse: newPassword })
+  return stepOf(res.nextStep.signInStep)
+}
+
+function stepOf(step: string): SignInStep {
+  if (step === 'DONE') return 'done'
+  if (step === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED') return 'newPassword'
+  if (step === 'RESET_PASSWORD') return 'resetPassword'
+  throw new Error(`This account needs a sign-in step the app doesn't support (${step}). Contact IT.`)
+}
+
+/** Cognito emails a reset code. Returns the masked address it went to, e.g. "a***@e***". */
+export async function requestPasswordReset(email: string): Promise<string | undefined> {
+  const res = await resetPassword({ username: email.trim() })
+  return res.nextStep.codeDeliveryDetails?.destination
+}
+
+export async function confirmPasswordReset(email: string, code: string, newPassword: string): Promise<void> {
+  await confirmResetPassword({ username: email.trim(), confirmationCode: code.trim(), newPassword })
+}
+
+/** For a signed-in user. */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  await updatePassword({ oldPassword, newPassword })
+}
+
+/** Sign out of Cognito and go back to the portal picker. */
+export async function signOutEverywhere(): Promise<void> {
+  try {
+    await signOut()
+  } finally {
+    window.location.replace('/')
+  }
+}
+
+/** The pool's password policy, mirrored so the forms can check it before calling Cognito. */
+export const PASSWORD_RULES: { label: string; test: (p: string) => boolean }[] = [
+  { label: 'At least 12 characters', test: (p) => p.length >= 12 },
+  { label: 'An uppercase letter', test: (p) => /[A-Z]/.test(p) },
+  { label: 'A lowercase letter', test: (p) => /[a-z]/.test(p) },
+  { label: 'A number', test: (p) => /\d/.test(p) },
+]
+
+export const passwordOk = (p: string) => PASSWORD_RULES.every((r) => r.test(p))
+
+/** Cognito's error, worded for the person at the keyboard. */
+export function authErrorMessage(e: unknown): string {
+  const err = e as { name?: string; message?: string }
+  switch (err?.name) {
+    case 'NotAuthorizedException':
+      if (/temporary password has expired/i.test(err.message ?? '')) {
+        return 'Your temporary password has expired. Ask IT to send you a new one.'
+      }
+      if (/disabled/i.test(err.message ?? '')) return 'This account is deactivated. Contact IT.'
+      if (/incorrect username or password/i.test(err.message ?? '')) return 'Incorrect email or password.'
+      return err.message ?? 'Not allowed.'
+    case 'UserNotFoundException':
+      return 'Incorrect email or password.'
+    case 'CodeMismatchException':
+      return "That code isn't right. Check the email and try again."
+    case 'ExpiredCodeException':
+      return 'That code has expired. Ask for a new one.'
+    case 'InvalidPasswordException':
+      return err.message?.replace(/^Password does not conform to policy: /, '') ?? 'That password is not allowed.'
+    case 'LimitExceededException':
+    case 'TooManyRequestsException':
+    case 'TooManyFailedAttemptsException':
+      return 'Too many attempts. Wait a few minutes and try again.'
+    case 'InvalidParameterException':
+      if (/no registered\/verified email/i.test(err.message ?? '')) {
+        return "This account has no verified email to send a code to. Ask IT to reset your password."
+      }
+      return err.message ?? 'Something in the form is not valid.'
+    default:
+      return err?.message || 'Something went wrong. Try again.'
+  }
 }
 
 export async function fetchMe(): Promise<Me> {
   // Everyone holds EMPLOYEE, so it's always a valid role to ask with.
-  const res = await fetch(`${API_BASE_URL}/me`, { headers: { ...authHeaders(), 'X-Active-Role': 'EMPLOYEE' } })
+  const res = await fetch(`${API_BASE_URL}/me`, { headers: { ...(await authHeaders()), 'X-Active-Role': 'EMPLOYEE' } })
   if (!res.ok) throw await apiError(res)
   const me = (await res.json()) as Omit<Me, 'employeeId'> & { employeeId: string | number }
   return { ...me, employeeId: String(me.employeeId) }
