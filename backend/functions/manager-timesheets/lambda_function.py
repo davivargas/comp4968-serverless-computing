@@ -2,6 +2,7 @@ from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, parse_body, qs, router
+from payroll_common.payroll import ensure_periods
 from payroll_common.shapes import entry_json
 from payroll_common.validate import bad, one_of, opt_date, opt_int, order_by, paging, path_id, require_date
 
@@ -100,8 +101,30 @@ def approve(event, ctx):
         return _result(conn, emp_id, frm, to)
 
 
+def reject(event, ctx):
+    """PATCH /manager/employees/{id}/timesheets/reject  body {from, to}  - sends the whole range back to the employee"""
+    emp_id, frm, to = _range_for_review(event, ctx)
+    with transaction() as conn:
+        ensure_periods(conn, to)
+        released = one(conn, "SELECT 1 AS x FROM pay_period WHERE status = 'RELEASED' AND start_date <= %s AND end_date >= %s", (to, frm))
+        if released:
+            raise HttpError(409, "That range touches a pay period that has already been released")
+        rows = _lock_entries(conn, ctx, emp_id, frm, to)
+        if not any(r["submitted"] for r in rows):
+            raise HttpError(409, "That employee has no submitted entries in the range")
+        ids = [r["timesheet_id"] for r in rows if r["submitted"]]
+        query(conn, """UPDATE timesheet_entry SET submitted = false, approved = false, reviewed_by = %s, reviewed_at = now(), updated_at = now()
+                        WHERE timesheet_id = ANY(%s)""", (ctx["employee_id"], ids))
+        for r in rows:
+            if r["submitted"]:
+                audit(conn, ctx, "timesheet_entry", r["timesheet_id"], "UPDATE", {"submitted": True, "approved": r["approved"]},
+                      {"submitted": False, "approved": False, "reviewed_by": ctx["employee_id"]})
+        return _result(conn, emp_id, frm, to)
+
+
 lambda_handler = router({
     "GET /manager/timesheets": with_auth(MGR, list_timesheets),
     "GET /manager/timesheets/{id}": with_auth(MGR, detail),
     "PATCH /manager/employees/{id}/timesheets/approve": with_auth(MGR, approve),
+    "PATCH /manager/employees/{id}/timesheets/reject": with_auth(MGR, reject),
 })
