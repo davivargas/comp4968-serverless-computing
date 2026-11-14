@@ -15,7 +15,7 @@ function LoadingTip() {
     // A fixed minimum height keeps the title from jumping as longer and shorter tips swap in.
     <div className="relative mt-6 flex min-h-28 w-full flex-col justify-center rounded-xl border bg-card px-5 py-4 text-left shadow-xs">
       <span aria-hidden className="absolute -top-[7px] left-1/2 size-3 -translate-x-1/2 rotate-45 border-t border-l bg-card" />
-      <div className="mb-1 text-xs font-semibold text-primary">Tick's money tip 🇨🇦</div>
+      <div className="mb-1 text-xs font-semibold text-primary">Tick's money tip</div>
       <p key={tip} className="text-sm leading-relaxed text-muted-foreground motion-safe:animate-pop">{TIPS[tip]}</p>
     </div>
   )
