@@ -6,7 +6,7 @@ from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, created, parse_body, qs, router
-from payroll_common.validate import (address, address_json, one_of, opt_int, order_by, paging, path_id, phone_e164, require_date,
+from payroll_common.validate import (address, address_json, bad, one_of, opt_int, order_by, paging, path_id, phone_e164, require_date,
                                      require_email, require_int, require_str)
 
 IT = ["IT"]
@@ -157,9 +157,49 @@ def reset_password(event, ctx):
     return {"message": "Password reset initiated"}
 
 
+def update_user(event, ctx):
+    """PATCH /it/users/{id}  any of {firstName, lastName, email, phone, address, positionId, teamId}"""
+    emp_id, b, ch = path_id(event), parse_body(event), {}
+    if "firstName" in b:
+        ch["first_name"] = require_str(b["firstName"], "firstName", 100)
+    if "lastName" in b:
+        ch["last_name"] = require_str(b["lastName"], "lastName", 100)
+    if "email" in b:
+        ch["email"] = require_email(b["email"])
+    if "phone" in b:
+        ch["phone"] = phone_e164(b["phone"]) if b["phone"] else None
+    if "address" in b:
+        ch.update(address(b["address"]))
+    if "positionId" in b:
+        ch["position_id"] = require_int(b["positionId"], "positionId")
+    if "teamId" in b:
+        ch["team_id"] = opt_int(b["teamId"], "teamId")
+    if not ch:
+        bad("No updatable fields supplied")
+    with transaction() as conn:
+        old = one(conn, "SELECT * FROM employee WHERE employee_id = %s FOR UPDATE", (emp_id,))
+        if not old:
+            raise HttpError(404, "User not found")
+        if "position_id" in ch and ch["position_id"] != old["position_id"]:
+            check_position(conn, ch["position_id"])
+        if ch.get("team_id") is not None and ch["team_id"] != old["team_id"]:
+            check_team(conn, ch["team_id"])
+        if "email" in ch and ch["email"] != old["email"] and one(conn, "SELECT 1 AS x FROM employee WHERE email = %s", (ch["email"],)):
+            raise HttpError(409, "Email already in use")
+        cols = list(ch)
+        query(conn, f"UPDATE employee SET {', '.join(c + ' = %s' for c in cols)}, updated_at = now() WHERE employee_id = %s",
+              [ch[c] for c in cols] + [emp_id])
+        if "email" in ch and ch["email"] != old["email"]:
+            cognito().admin_update_user_attributes(UserPoolId=pool(), Username=old["cognito_sub"],
+                                                   UserAttributes=[{"Name": "email", "Value": ch["email"]}, {"Name": "email_verified", "Value": "true"}])
+        audit(conn, ctx, "employee", emp_id, "UPDATE", {c: old[c] for c in cols}, ch)
+        return get_user(conn, emp_id)
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
     "GET /it/users/{id}": with_auth(IT, get_one),
     "POST /it/users/{id}/reset-password": with_auth(IT, reset_password),
+    "PATCH /it/users/{id}": with_auth(IT, update_user),
 })
