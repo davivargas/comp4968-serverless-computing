@@ -9,6 +9,8 @@ import {
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import Mascot from '@/components/Mascot'
+import TipBuddy from '@/components/TipBuddy'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/employee/api'
 
@@ -34,7 +36,7 @@ export default function EmployeeLayout() {
               <SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild>
                   <Link to="/employee">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">{APP_NAME[0]}</div>
+                    <Mascot className="!size-8 shrink-0" label="" />
                     <div className="grid leading-tight">
                       <span className="font-semibold">{APP_NAME}</span>
                       <span className="text-xs text-muted-foreground">Employee portal</span>
@@ -90,7 +92,7 @@ export default function EmployeeLayout() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      <Toaster position="bottom-right" />
+      <TipBuddy /><Toaster position="bottom-right" offset={{ bottom: 96 }} />
     </TooltipProvider>
   )
 }

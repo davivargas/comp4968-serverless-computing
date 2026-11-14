@@ -8,6 +8,8 @@ import {
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import Mascot from '@/components/Mascot'
+import TipBuddy from '@/components/TipBuddy'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/manager/api'
 import { CURRENT_MANAGER } from '@/lib/manager/session'
@@ -32,7 +34,7 @@ export default function ManagerLayout() {
               <SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild>
                   <Link to="/manager">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">{APP_NAME[0]}</div>
+                    <Mascot className="!size-8 shrink-0" label="" />
                     <div className="grid leading-tight">
                       <span className="font-semibold">{APP_NAME}</span>
                       <span className="text-xs text-muted-foreground">Manager portal</span>
@@ -90,7 +92,7 @@ export default function ManagerLayout() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      <Toaster position="bottom-right" />
+      <TipBuddy /><Toaster position="bottom-right" offset={{ bottom: 96 }} />
     </TooltipProvider>
   )
 }
