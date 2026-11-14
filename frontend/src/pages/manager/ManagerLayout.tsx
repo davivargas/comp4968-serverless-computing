@@ -13,7 +13,7 @@ import Mascot from '@/components/Mascot'
 import TipBuddy from '@/components/TipBuddy'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/manager/api'
-import { CURRENT_MANAGER } from '@/lib/manager/session'
+import { useSession } from '@/components/auth/session-context'
 
 const NAV = [
   { to: '/manager/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -23,6 +23,7 @@ const NAV = [
 ]
 
 export default function ManagerLayout() {
+  const { me } = useSession()
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
 
@@ -74,7 +75,7 @@ export default function ManagerLayout() {
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="text-sm font-medium">{current?.label}</span>
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-sm">Hi, <span className="font-medium">{CURRENT_MANAGER.firstName}</span></span>
+              <span className="text-sm">Hi, <span className="font-medium">{me?.firstName}</span></span>
               {usingMockApi && <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">Mock API</span>}
               <ModeToggle />
             </div>
