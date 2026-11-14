@@ -1,5 +1,6 @@
 import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import Mascot from '@/components/Mascot'
 import { ModeToggle } from '@/components/mode-toggle'
 import { APP_NAME } from '@/lib/brand'
 import { PORTALS } from '@/lib/portals'
@@ -8,7 +9,7 @@ export default function LandingPage() {
   return (
     <div className="flex min-h-svh flex-col">
       <header className="mx-auto flex w-full max-w-4xl items-center justify-between px-6 pt-8">
-        <div className="font-semibold">{APP_NAME}</div>
+        <div className="flex items-center gap-2 font-semibold"><Mascot className="size-9" mode="idle" label="" />{APP_NAME}</div>
         <ModeToggle />
       </header>
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-6 py-12">
