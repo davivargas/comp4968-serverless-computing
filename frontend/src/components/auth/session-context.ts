@@ -7,8 +7,8 @@ export interface Session {
   status: SessionStatus
   me: Me | null
   error: string | null
-  /** Send the user to sign in, then bring them back to `returnTo`. */
-  signIn(returnTo: string): void
+  /** Call after the sign-in form succeeds: picks up the new Cognito session and loads `/me`. */
+  refresh(): Promise<void>
   signOut(): void
 }
 
