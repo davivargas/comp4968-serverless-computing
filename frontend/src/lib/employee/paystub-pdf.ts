@@ -30,6 +30,10 @@ export function downloadPayStubPdf(stub: PayStub) {
   doc.setFontSize(20).text(formatMoney(stub.net), right, 116, { align: 'right' })
 
   const head = { fillColor: [8, 145, 178] as [number, number, number], textColor: 255 }
+  // columnStyles only reaches body rows, so line up the headers and totals with the numbers.
+  const alignFoot = ({ section, column, cell }: { section: string; column: { index: number }; cell: { styles: { halign: string } } }) => {
+    if (section !== 'body' && column.index > 0) cell.styles.halign = 'right'
+  }
   autoTable(doc, {
     startY: 180,
     head: [['Earnings', 'Hours', 'Rate', 'Current']],
@@ -41,6 +45,7 @@ export function downloadPayStubPdf(stub: PayStub) {
     headStyles: head,
     footStyles: { fillColor: [245, 245, 245], textColor: 0 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    didParseCell: alignFoot,
     margin: { left: x, right: 48 },
   })
 
@@ -56,6 +61,7 @@ export function downloadPayStubPdf(stub: PayStub) {
     headStyles: head,
     footStyles: { fillColor: [245, 245, 245], textColor: 0 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+    didParseCell: alignFoot,
     margin: { left: x, right: 48 },
   })
 
