@@ -31,3 +31,14 @@ export function earningLabel(line: PayStubLine): string {
   if (line.lineType === 'VACATION') return 'Vacation pay'
   return code || 'Project'
 }
+
+/**
+ * Vacation pay is a percentage of the period's wages (4%, or 6% after five years), not hours, so the
+ * backend stores it with 0 hours and a $0 rate. Returns the percentage it works out to ("4%"), or null
+ * for any other line. Callers show it in the Rate column and a dash for hours.
+ */
+export function vacationPercent(line: PayStubLine, lines: PayStubLine[]): string | null {
+  if (line.lineType !== 'VACATION') return null
+  const wages = lines.filter((l) => l.lineType !== 'VACATION').reduce((sum, l) => sum + l.amount, 0)
+  return wages > 0 ? `${Math.round((line.amount / wages) * 100)}%` : '—'
+}

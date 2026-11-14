@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { employeeApi } from '@/lib/employee/api'
 import { formatDate, formatHours, formatMoney, toISODate } from '@/lib/employee/dates'
-import { DEDUCTION_LABELS, earningLabel, totalDeductions } from '@/lib/employee/pay'
+import { DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from '@/lib/employee/pay'
 import type { Deductions, PayStub, PayStubSummary } from '@/lib/employee/types'
 
 /** How far back the date dropdowns reach. */
@@ -202,14 +202,17 @@ function StubDetail({ stub }: { stub: PayStub }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {stub.earnings.map((e, i) => (
-            <TableRow key={i}>
-              <TableCell>{earningLabel(e)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatHours(e.hours)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatMoney(e.rate)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatMoney(e.amount)}</TableCell>
-            </TableRow>
-          ))}
+          {stub.earnings.map((e, i) => {
+            const pct = vacationPercent(e, stub.earnings)
+            return (
+              <TableRow key={i}>
+                <TableCell>{earningLabel(e)}</TableCell>
+                <TableCell className="text-right tabular-nums">{pct ? '—' : formatHours(e.hours)}</TableCell>
+                <TableCell className="text-right tabular-nums">{pct ?? formatMoney(e.rate)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatMoney(e.amount)}</TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
         <TableFooter>
           <TableRow>
