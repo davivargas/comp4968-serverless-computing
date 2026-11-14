@@ -106,8 +106,13 @@ export interface PayStubSummary {
   net: number
 }
 
+export type EarningLineType = 'PROJECT' | 'OVERTIME_PREMIUM' | 'VACATION'
+
 export interface PayStubLine {
-  projectCode: string
+  /** Set by the real backend; the mock only produces project lines. */
+  lineType?: EarningLineType
+  /** Null on overtime-premium and vacation lines that aren't tied to a project. */
+  projectCode: string | number | null
   hours: number
   rate: number
   amount: number

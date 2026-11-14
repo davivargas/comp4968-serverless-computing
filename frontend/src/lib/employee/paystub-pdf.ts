@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { APP_NAME } from '@/lib/brand'
 import { formatDate, formatMoney } from './dates'
-import { DEDUCTION_LABELS, totalDeductions } from './pay'
+import { DEDUCTION_LABELS, earningLabel, totalDeductions } from './pay'
 import type { Deductions, PayStub } from './types'
 
 export function downloadPayStubPdf(stub: PayStub) {
@@ -35,7 +35,7 @@ export function downloadPayStubPdf(stub: PayStub) {
   autoTable(doc, {
     startY: 180,
     head: [['Earnings', 'Hours', 'Rate', 'Current']],
-    body: stub.earnings.map((e) => [e.projectCode, e.hours.toFixed(2), formatMoney(e.rate), formatMoney(e.amount)]),
+    body: stub.earnings.map((e) => [earningLabel(e), e.hours.toFixed(2), formatMoney(e.rate), formatMoney(e.amount)]),
     foot: [
       ['Gross pay', stub.hours.toFixed(2), '', formatMoney(stub.gross)],
       ['Year to date', stub.ytd.hours.toFixed(2), '', formatMoney(stub.ytd.gross)],

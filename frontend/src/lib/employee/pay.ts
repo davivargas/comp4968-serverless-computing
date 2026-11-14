@@ -1,4 +1,4 @@
-import type { Deductions } from './types'
+import type { Deductions, PayStubLine } from './types'
 
 export type PaySlice = 'net' | keyof Deductions
 
@@ -23,3 +23,11 @@ export const DEDUCTION_LABELS: Record<keyof Deductions, string> = {
 }
 
 export const totalDeductions = (d: Deductions) => d.federalTax + d.provincialTax + d.cpp + d.ei
+
+/** How an earnings line reads on a pay stub. A project can have both a project line and an overtime line. */
+export function earningLabel(line: PayStubLine): string {
+  const code = line.projectCode === null || line.projectCode === undefined ? '' : String(line.projectCode)
+  if (line.lineType === 'OVERTIME_PREMIUM') return code ? `Overtime premium · ${code}` : 'Overtime premium'
+  if (line.lineType === 'VACATION') return 'Vacation pay'
+  return code || 'Project'
+}
