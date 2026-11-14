@@ -314,6 +314,12 @@ def update_team(event, ctx):
         return team_json(one(conn, f"{TEAM_SELECT} WHERE t.team_id = %s", (tid,)))
 
 
+def list_positions(event, ctx):
+    """GET /it/positions - for the position dropdowns. No wages are returned. Deleted positions are not listed."""
+    rows = query(get_conn(), "SELECT position_id, title, pay_grade FROM position WHERE NOT is_deleted ORDER BY title")
+    return {"positions": [{"positionId": r["position_id"], "title": r["title"], "payGrade": r["pay_grade"]} for r in rows]}
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
@@ -325,4 +331,5 @@ lambda_handler = router({
     "GET /it/teams": with_auth(IT, list_teams),
     "POST /it/teams": with_auth(IT, create_team),
     "PATCH /it/teams/{id}": with_auth(IT, update_team),
+    "GET /it/positions": with_auth(IT, list_positions),
 })
