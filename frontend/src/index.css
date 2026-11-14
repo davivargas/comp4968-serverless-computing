@@ -145,3 +145,37 @@
     50% { transform: scaleX(0.5); opacity: 0.4; animation-timing-function: ease-in; }
   }
 }
+
+/* Tick the mascot: blinks, glances around, raises its brows and jiggles its bells in time with the pogo hop. */
+@theme {
+  --animate-blink: blink 4s infinite;
+  --animate-glance: glance 6s ease-in-out infinite;
+  --animate-brows: brows 0.9s ease-in-out infinite;
+  --animate-bell: bell 0.9s ease-in-out infinite;
+  --animate-pop: pop 0.25s ease-out;
+
+  @keyframes blink {
+    0%, 93%, 100% { transform: scaleY(1); }
+    96% { transform: scaleY(0.1); }
+  }
+  @keyframes glance {
+    0%, 20%, 100% { translate: 0 0; }
+    30%, 50% { translate: -2.2px 0.6px; }
+    60%, 80% { translate: 0.4px -1.2px; }
+  }
+  @keyframes brows {
+    0%, 30%, 70%, 100% { translate: 0 0; }
+    50% { translate: 0 -2px; }
+  }
+  @keyframes bell {
+    0%, 100% { rotate: 0deg; }
+    8% { rotate: -14deg; }
+    16% { rotate: 12deg; }
+    24% { rotate: -6deg; }
+    32% { rotate: 0deg; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(6px) scale(0.96); }
+    to { opacity: 1; transform: none; }
+  }
+}
