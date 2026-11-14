@@ -36,7 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
     // authHeaders() adds the Cognito ID token that API Gateway checks before any Lambda runs.
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...(await authHeaders()), ...init?.headers },
   })
   if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()

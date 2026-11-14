@@ -19,7 +19,7 @@ export interface ManagerApi {
 const BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
-    method, headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'MANAGER', ...authHeaders() },
+    method, headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'MANAGER', ...(await authHeaders()) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!response.ok) throw await apiError(response)

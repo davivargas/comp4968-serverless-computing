@@ -25,7 +25,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
     // The backend checks X-Active-Role against the signed-in user's roles; /pa routes need PAYROLL_ADMIN.
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'PAYROLL_ADMIN', ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': 'PAYROLL_ADMIN', ...(await authHeaders()), ...init?.headers },
   })
   if (!response.ok) throw await apiError(response)
   return response.status === 204 ? (undefined as T) : response.json()

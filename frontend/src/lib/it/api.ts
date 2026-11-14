@@ -39,7 +39,7 @@ const ACTIVE_ROLE: Role = 'IT'
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...(await authHeaders()), ...init?.headers },
   })
   if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()
