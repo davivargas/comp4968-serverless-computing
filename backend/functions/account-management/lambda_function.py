@@ -224,6 +224,27 @@ def set_status(event, ctx):
         return get_user(conn, emp_id)
 
 
+def set_role(event, ctx):
+    """PATCH /it/users/{id}/role  body {role: MANAGER | PAYROLL_ADMIN | IT | EMPLOYEE | null}"""
+    emp_id, b = path_id(event), parse_body(event)
+    if "role" not in b:
+        bad('role is required (use null or "EMPLOYEE" for no elevated role)')
+    if b["role"] is not None:
+        one_of(b["role"], "role", ["EMPLOYEE"] + ELEVATED)
+    if emp_id == ctx["employee_id"]:
+        bad("You cannot change your own role")
+    with transaction() as conn:
+        old = one(conn, "SELECT role_id FROM employee WHERE employee_id = %s FOR UPDATE", (emp_id,))
+        if not old:
+            raise HttpError(404, "User not found")
+        rid = role_id_for(conn, b["role"])
+        if b["role"] != "MANAGER" and one(conn, "SELECT 1 AS x FROM team WHERE manager_id = %s AND NOT is_deleted", (emp_id,)):
+            raise HttpError(409, "This person still manages a team; give the team another manager first")
+        query(conn, "UPDATE employee SET role_id = %s, updated_at = now() WHERE employee_id = %s", (rid, emp_id))
+        audit(conn, ctx, "employee", emp_id, "UPDATE", {"role_id": old["role_id"]}, {"role_id": rid})
+        return get_user(conn, emp_id)
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
@@ -231,4 +252,5 @@ lambda_handler = router({
     "POST /it/users/{id}/reset-password": with_auth(IT, reset_password),
     "PATCH /it/users/{id}": with_auth(IT, update_user),
     "PATCH /it/users/{id}/status": with_auth(IT, set_status),
+    "PATCH /it/users/{id}/role": with_auth(IT, set_role),
 })
