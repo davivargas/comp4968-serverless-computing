@@ -391,3 +391,146 @@ def test_update_position_changes_fields_and_deletes_when_unassigned(monkeypatch,
     assert audit.call_args_list[1].args == (
         db, ADMIN, "position", 5, "DELETE", {"is_deleted": False}, {"is_deleted": True}
     )
+
+
+@pytest.mark.parametrize("year", [2000, 2024, 2100])
+def test_list_stat_holidays_uses_inclusive_year_boundaries(monkeypatch, db, year):
+    rows = [{"holiday_date": datetime.date(year, 1, 1), "name": "New Year"}]
+    query = Mock(return_value=rows)
+    monkeypatch.setattr(processing, "query", query)
+
+    assert processing.list_stat_holidays(event(params={"year": str(year)}), ADMIN) == {
+        "year": year, "holidays": [{"date": datetime.date(year, 1, 1), "name": "New Year"}],
+    }
+    assert query.call_args.args[2] == (datetime.date(year, 1, 1), datetime.date(year, 12, 31))
+    assert "ORDER BY holiday_date" in query.call_args.args[1]
+
+
+def test_list_stat_holidays_defaults_to_current_year_and_handles_empty_result(monkeypatch, db):
+    monkeypatch.setattr(processing.payroll, "today_bc", lambda: TODAY)
+    monkeypatch.setattr(processing, "query", Mock(return_value=[]))
+    assert processing.list_stat_holidays(event(), ADMIN) == {"year": 2026, "holidays": []}
+
+
+@pytest.mark.parametrize("year", ["1999", "2101", "abc"])
+def test_list_stat_holidays_rejects_invalid_year_before_database(monkeypatch, year):
+    monkeypatch.setattr(processing, "get_conn", lambda: pytest.fail("database should not be reached"))
+    with pytest.raises(processing.HttpError) as exc:
+        processing.list_stat_holidays(event(params={"year": year}), ADMIN)
+    assert exc.value.status == 400
+
+
+def test_add_stat_holiday_inserts_and_audits(monkeypatch, db):
+    one = Mock(side_effect=[None, None])
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+
+    response = processing.add_stat_holiday(
+        event(body={"date": "2026-07-01", "name": " Canada Day "}), ADMIN
+    )
+
+    date = datetime.date(2026, 7, 1)
+    assert response["statusCode"] == 201
+    assert json.loads(response["body"]) == {"date": "2026-07-01", "name": "Canada Day"}
+    assert one.call_args_list[0].args[2] == (date,)
+    assert "status = 'RELEASED'" in one.call_args_list[0].args[1]
+    assert one.call_args_list[1].args[2] == (date,)
+    assert query.call_args.args[2] == (date, "Canada Day", 17)
+    assert audit.call_args.args == (
+        db, ADMIN, "stat_holiday", "2026-07-01", "INSERT", None,
+        {"holiday_date": date, "name": "Canada Day", "created_by": 17},
+    )
+
+
+@pytest.mark.parametrize(
+    "rows, message",
+    [
+        ([{"period_exists": 1}], "That date is inside a pay period that has already been released"),
+        ([None, {"holiday_exists": 1}], "That date is already a stat holiday"),
+    ],
+)
+def test_add_stat_holiday_rejects_released_or_duplicate_dates_without_writes(monkeypatch, db, rows, message):
+    monkeypatch.setattr(processing, "one", Mock(side_effect=rows))
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+
+    with pytest.raises(processing.HttpError) as exc:
+        processing.add_stat_holiday(event(body={"date": "2026-07-01", "name": "Canada Day"}), ADMIN)
+    assert exc.value.status == 409
+    assert str(exc.value) == message
+    query.assert_not_called()
+    audit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({"date": "2026-02-30", "name": "Holiday"}, "date must be a date (YYYY-MM-DD)"),
+        ({"date": "2026-07-01", "name": ""}, "name is required"),
+    ],
+)
+def test_add_stat_holiday_validates_before_transaction(monkeypatch, body, message):
+    monkeypatch.setattr(processing, "transaction", lambda: pytest.fail("transaction should not start"))
+    with pytest.raises(processing.HttpError) as exc:
+        processing.add_stat_holiday(event(body=body), ADMIN)
+    assert exc.value.status == 400
+    assert str(exc.value) == message
+
+
+def test_delete_stat_holiday_deletes_and_audits_previous_value(monkeypatch, db):
+    date = datetime.date(2026, 7, 1)
+    one = Mock(side_effect=[{"holiday_date": date, "name": "Canada Day"}, None])
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+
+    response = processing.delete_stat_holiday(event(path={"date": "2026-07-01"}), ADMIN)
+
+    assert response["statusCode"] == 204
+    assert response["body"] == ""
+    assert "FOR UPDATE" in one.call_args_list[0].args[1]
+    assert one.call_args_list[1].args[2] == (date,)
+    assert query.call_args.args[2] == (date,)
+    assert audit.call_args.args == (
+        db, ADMIN, "stat_holiday", "2026-07-01", "DELETE",
+        {"holiday_date": date, "name": "Canada Day"}, None,
+    )
+
+
+@pytest.mark.parametrize(
+    "rows, status, message",
+    [
+        ([None], 404, "That date is not a stat holiday"),
+        (
+            [{"holiday_date": datetime.date(2026, 7, 1), "name": "Canada Day"}, {"period_exists": 1}],
+            409, "That date is inside a pay period that has already been released",
+        ),
+    ],
+)
+def test_delete_stat_holiday_rejects_missing_or_released_date_without_writes(
+    monkeypatch, db, rows, status, message
+):
+    one, query, audit = Mock(side_effect=rows), Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+
+    with pytest.raises(processing.HttpError) as exc:
+        processing.delete_stat_holiday(event(path={"date": "2026-07-01"}), ADMIN)
+
+    assert exc.value.status == status
+    assert str(exc.value) == message
+    query.assert_not_called()
+    audit.assert_not_called()
+
+
+def test_delete_stat_holiday_rejects_invalid_date_before_transaction(monkeypatch):
+    monkeypatch.setattr(processing, "transaction", lambda: pytest.fail("transaction should not start"))
+    with pytest.raises(processing.HttpError) as exc:
+        processing.delete_stat_holiday(event(path={"date": "2026-02-30"}), ADMIN)
+    assert exc.value.status == 400
+    assert str(exc.value) == "date must be a date (YYYY-MM-DD)"
