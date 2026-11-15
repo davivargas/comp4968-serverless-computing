@@ -2,7 +2,7 @@ from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query
 from payroll_common.http_utils import HttpError, qs, router
 from payroll_common.payroll import today_bc
-from payroll_common.shapes import WAGE_JOIN
+from payroll_common.shapes import PAID_HOURS_SQL, WAGE_JOIN
 from payroll_common.validate import address_json, bad, one_of, opt_date, opt_int, order_by, paging, path_id
 
 PA = ["PAYROLL_ADMIN"]
@@ -25,7 +25,7 @@ def _period_filter(q):
     return "EXTRACT(YEAR FROM pp.pay_date) = %s", [year], f"year {year}"
 
 
-AGG = """SELECT COALESCE(SUM(ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours), 0) AS hours,
+AGG = f"""SELECT COALESCE(SUM({PAID_HOURS_SQL}), 0) AS hours,
                 COALESCE(SUM(ps.gross_pay), 0) AS gross, COALESCE(SUM(ps.total_deductions), 0) AS deductions, COALESCE(SUM(ps.net_pay), 0) AS net
            FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id"""
 
@@ -79,7 +79,7 @@ def get_employee(event, ctx):
         raise HttpError(404, "Employee not found")
     pf_sql, pf_params, label = _period_filter(q)
     agg = one(conn, f"{AGG} WHERE ps.employee_id = %s AND {pf_sql}", [emp_id] + pf_params)
-    stubs = query(conn, f"""SELECT pp.pay_date, pp.start_date, pp.end_date, ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours AS hours,
+    stubs = query(conn, f"""SELECT pp.pay_date, pp.start_date, pp.end_date, {PAID_HOURS_SQL} AS hours,
                                    ps.gross_pay, ps.total_deductions, ps.net_pay
                               FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
                              WHERE ps.employee_id = %s AND {pf_sql} ORDER BY pp.pay_date DESC""", [emp_id] + pf_params)
