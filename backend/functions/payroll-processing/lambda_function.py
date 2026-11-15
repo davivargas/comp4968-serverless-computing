@@ -584,6 +584,37 @@ def assert_date_not_released(connection, holiday_date):
 
     if released_period:
         raise HttpError(409, "That date is inside a pay period that has already been released")
+    
+    
+def add_stat_holiday(event, request_context):
+    """POST /pa/stat-holidays  body {date, name}"""
+    request_body = parse_body(event)
+    holiday_date = require_date(request_body.get("date"), "date")
+    name = require_str(request_body.get("name"), "name", 100)
+
+    with transaction() as connection:
+        assert_date_not_released(connection, holiday_date)
+
+        if one(connection, "SELECT 1 AS holiday_exists FROM stat_holiday WHERE holiday_date = %s", (holiday_date,)):
+            raise HttpError(409, "That date is already a stat holiday")
+
+        query(
+            connection,
+            "INSERT INTO stat_holiday (holiday_date, name, created_by) VALUES (%s, %s, %s)",
+            (holiday_date, name, request_context["employee_id"])
+        )
+
+        audit(
+            connection,
+            request_context,
+            "stat_holiday",
+            holiday_date.isoformat(),
+            "INSERT",
+            None,
+            {"holiday_date": holiday_date, "name": name, "created_by": request_context["employee_id"]}
+        )
+
+    return created({"date": holiday_date, "name": name})
 
 
 lambda_handler = router({
