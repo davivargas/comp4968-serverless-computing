@@ -1,13 +1,15 @@
 """Payroll release (pay-period level) and position / wage administration (Payroll Admin)."""
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+import datetime
 
 from payroll_common import payroll as payroll
 from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, created, no_content, parse_body, router, qs
-from payroll_common.validate import bad, paging, path_id, require_bool_true, require_date, require_str
+from payroll_common.release import release_period
+from payroll_common.validate import bad, opt_int, paging, path_id, require_bool_true, require_date, require_str
 
 
 PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
@@ -539,6 +541,32 @@ def update_position(event, request_context):
             audit(connection, request_context, "position", position_id, "DELETE", {"is_deleted": False}, {"is_deleted": True})
             return no_content()
         return position_json(connection, position_id)
+    
+    
+# ---- stat holidays ------------------------------------------------------------------------------------------
+
+def list_stat_holidays(event, request_context):
+    """GET /stat-holidays?year=  - any signed-in role, so the timesheet can colour the dates."""
+    year = opt_int(qs(event).get("year"), "year") or payroll.today_bc().year
+    if year < 2000 or year > 2100:
+        bad("year must be between 2000 and 2100")
+    holiday_rows = query(
+        get_conn(),
+        """
+        SELECT holiday_date, name
+        FROM stat_holiday
+        WHERE holiday_date BETWEEN %s AND %s
+        ORDER BY holiday_date
+        """,
+        (datetime.date(year, 1, 1), datetime.date(year, 12, 31))
+    )
+    return {
+        "year": year,
+        "holidays": [
+            {"date": holiday_row["holiday_date"], "name": holiday_row["name"]}
+            for holiday_row in holiday_rows
+        ]
+    }
 
 
 lambda_handler = router({
