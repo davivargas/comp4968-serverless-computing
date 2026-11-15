@@ -28,3 +28,13 @@ The settings are in `backend/pytest.ini`:
 - pytest only looks for tests inside `tests/`.
 - `tests/` and `layers/common/python/` are on the import path, so tests can import `helpers` and `payroll_common` directly.
 - Test files in different folders can have the same name without clashing.
+
+## Shared helpers
+
+`tests/helpers/` has building blocks for new tests:
+
+- `events.py`: `api_event()` and `sqs_event()` build the events AWS sends to a Lambda.
+- `lambdas.py`: `load_lambda("employee-pay")` imports that Lambda's `lambda_function.py`.
+- `fakes.py`: `FakeDB` answers SQL by text fragment and records every statement. `FakeCognito` records Cognito admin calls.
+
+Swap these in with pytest's `monkeypatch`. Don't replace modules in `sys.modules`: that leaks into every other test file in the run.
