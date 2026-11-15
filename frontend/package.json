@@ -10,6 +10,7 @@
     "test:manager": "node scripts/test-manager.mjs",
     "test:ui": "vitest run",
     "test:ui:watch": "vitest",
+    "test:ui:types": "tsc -p tsconfig.test.json",
     "preview": "vite preview"
   },
   "dependencies": {

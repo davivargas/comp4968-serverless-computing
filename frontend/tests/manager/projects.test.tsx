@@ -57,7 +57,7 @@ test('omits the code for automatic generation and cancel does not create a proje
   const user = await openProjects()
   await user.click(screen.getByRole('button', { name: 'Create project' }))
   await user.type(screen.getByLabelText('Project name'), 'Cancelled project')
-  await user.click(screen.getByRole('button', { name: 'Cancel', exact: true }))
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
   expect(managerApi.createProject).not.toHaveBeenCalled()
   expect(screen.queryByText('Cancelled project')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Create project' }))
@@ -92,7 +92,7 @@ test('renames a project and updates its visible row', async () => {
 
 test('close and reopen buttons change the project status', async () => {
   const user = await openProjects()
-  await user.click(within(projectRow()).getByRole('button', { name: 'Close', exact: true }))
+  await user.click(within(projectRow()).getByRole('button', { name: 'Close' }))
   await waitFor(() => expect(within(projectRow()).getByText('CLOSED')).toBeVisible())
   expect(managerApi.updateProject).toHaveBeenLastCalledWith('8', { status: 'CLOSED' })
   await user.click(within(projectRow()).getByRole('button', { name: 'Reopen' }))
@@ -102,12 +102,12 @@ test('close and reopen buttons change the project status', async () => {
 
 test('delete requires confirmation; cancelling keeps the project', async () => {
   const user = await openProjects()
-  await user.click(within(projectRow()).getByRole('button', { name: 'Delete', exact: true }))
+  await user.click(within(projectRow()).getByRole('button', { name: 'Delete' }))
   expect(managerApi.updateProject).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('button', { name: 'Cancel', exact: true }))
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
   expect(projectRow()).toBeVisible()
-  await user.click(within(projectRow()).getByRole('button', { name: 'Delete', exact: true }))
-  await user.click(screen.getByRole('button', { name: 'Delete project', exact: true }))
+  await user.click(within(projectRow()).getByRole('button', { name: 'Delete' }))
+  await user.click(screen.getByRole('button', { name: 'Delete project' }))
   await waitFor(() => expect(screen.queryByText('Assignment Testing')).not.toBeInTheDocument())
   expect(managerApi.updateProject).toHaveBeenCalledWith('8', { isDeleted: true })
 })
@@ -132,8 +132,8 @@ test('assigns an active employee, shows the assignment, and prevents duplicate c
   expect(within(dialog).getByText('Juan Pablo')).toBeVisible()
   expect(managerApi.assignEmployee).toHaveBeenCalledExactlyOnceWith('8', '51')
   await user.keyboard('{Escape}')
-  expect(within(projectRow()).getByRole('cell', { name: '1', exact: true })).toBeVisible()
-  expect(within(projectRow()).getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  expect(within(projectRow()).getByRole('cell', { name: '1' })).toBeVisible()
+  expect(within(projectRow()).getByRole('button', { name: 'Delete' })).toBeDisabled()
 })
 
 test('closed projects disable assignment controls', async () => {
@@ -165,4 +165,21 @@ test('load errors show a retry button that reloads the projects', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load projects')
   await user.click(screen.getByRole('button', { name: 'Retry' }))
   expect(await screen.findByText('Assignment Testing')).toBeVisible()
+})
+
+test('saving disables repeat submissions until the API responds', async () => {
+  let finish!: (project: ManagerProject) => void
+  vi.mocked(managerApi.createProject).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  const user = await openProjects()
+  await user.click(screen.getByRole('button', { name: 'Create project' }))
+  await user.type(screen.getByLabelText('Project name'), 'Slow project')
+  await user.click(screen.getByRole('button', { name: 'Save project' }))
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByRole('button', { name: /Saving/ })).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  expect(managerApi.createProject).toHaveBeenCalledTimes(1)
+  state.push({ ...projects[0], projectId: '10', name: 'Slow project' })
+  finish(state[2])
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(screen.getByText('Slow project')).toBeVisible()
 })
