@@ -3,7 +3,8 @@
 import type { EmployeeApi } from './api'
 import { addDays, fromISODate, MONTHS, toISODate } from './dates'
 import type {
-  Address, AggregatePay, Deductions, DirectDeposit, EmployeeProfile, ISODate, NewTimesheetEntry, PayPeriod, PayPeriodAggregate, PayStub, PayStubSummary, Project, TimesheetEntry,
+  Address, AggregatePay, Deductions, DirectDeposit, EmployeeProfile, ISODate, NewTimesheetEntry, PayPeriod, PayPeriodAggregate, PayStub, PayStubSummary, Project,
+  SickDays, StatHoliday, TimesheetEntry,
 } from './types'
 
 const PROJECTS: Project[] = [
@@ -12,6 +13,28 @@ const PROJECTS: Project[] = [
   { projectCode: 'PRJ-300', name: 'Data Warehouse' },
   { projectCode: 'INT-001', name: 'Internal / Meetings' },
   { projectCode: 'TRN-001', name: 'Training' },
+  // Same codes as the real backend's system projects; listed last, like GET /employee/{id}/projects.
+  { projectCode: '9001', name: 'Sick day', specialType: 'SICK' },
+  { projectCode: '9002', name: 'Vacation day', specialType: 'VAC' },
+  { projectCode: '9003', name: 'Miscellaneous', specialType: 'MISC' },
+]
+
+const SICK_DAYS_PER_YEAR = 5
+const SICK_CODES = new Set(PROJECTS.filter((p) => p.specialType === 'SICK').map((p) => p.projectCode))
+
+/** BC stat holidays, as seeded in the backend's stat_holiday table. */
+const STAT_HOLIDAYS: StatHoliday[] = [
+  { date: '2026-01-01', name: "New Year's Day" },
+  { date: '2026-02-16', name: 'Family Day' },
+  { date: '2026-04-03', name: 'Good Friday' },
+  { date: '2026-05-18', name: 'Victoria Day' },
+  { date: '2026-07-01', name: 'Canada Day' },
+  { date: '2026-08-03', name: 'British Columbia Day' },
+  { date: '2026-09-07', name: 'Labour Day' },
+  { date: '2026-09-30', name: 'National Day for Truth and Reconciliation' },
+  { date: '2026-10-12', name: 'Thanksgiving Day' },
+  { date: '2026-11-11', name: 'Remembrance Day' },
+  { date: '2026-12-25', name: 'Christmas Day' },
 ]
 
 /** The mock always has every detail filled in; the real backend may send nulls. */
@@ -116,6 +139,25 @@ function payPeriodInfo(d: Date): PayPeriod {
 const isEditableDate = (date: ISODate) => payPeriodInfo(fromISODate(date)).editable
 const lockedError = (date: ISODate) => new Error(`${date} is outside the open pay period`)
 
+/** Distinct dates with a SICK entry in the year. */
+const sickDatesUsed = (id: string, year: number) =>
+  [...new Set(timesheets.filter((t) => t.employeeId === id && SICK_CODES.has(t.projectCode) && t.date.startsWith(`${year}-`)).map((t) => t.date))].sort()
+
+/** Same rule and message as the real backend: at most SICK_DAYS_PER_YEAR distinct sick dates per calendar year. */
+function sickLimitError(id: string, entries: NewTimesheetEntry[]): Error | null {
+  const byYear = new Map<number, Set<ISODate>>()
+  for (const e of entries.filter((x) => SICK_CODES.has(x.projectCode))) {
+    const y = Number(e.date.slice(0, 4))
+    byYear.set(y, (byYear.get(y) ?? new Set()).add(e.date))
+  }
+  for (const [year, dates] of byYear) {
+    const used = sickDatesUsed(id, year)
+    if (new Set([...used, ...dates]).size > SICK_DAYS_PER_YEAR)
+      return new Error(`Only ${SICK_DAYS_PER_YEAR} sick days are allowed per calendar year; ${used.length} already used in ${year}`)
+  }
+  return null
+}
+
 // ---- pay stubs --------------------------------------------------------------
 
 function buildStub({ start, end, payDate }: MockPeriod): PayStub {
@@ -140,6 +182,16 @@ function buildStub({ start, end, payDate }: MockPeriod): PayStub {
     periodStart: toISODate(start),
     periodEnd: toISODate(end),
     hours,
+    hoursBreakdown: {
+      regular: { hours, pay: gross },
+      overtime: { hours: 0, pay: 0 },
+      doubleOvertime: { hours: 0, pay: 0 },
+      weekend: { hours: 0, pay: 0 },
+      statHoliday: { hours: 0, pay: 0 },
+      sick: { hours: 0, pay: 0 },
+      vacationLeaveHours: 0,
+      vacationPay: 0,
+    },
     gross,
     net: round2(gross - sumDeductions(deductions)),
     earnings,
@@ -180,6 +232,8 @@ export const mockApi: EmployeeApi = {
   createTimesheets: (id, entries: NewTimesheetEntry[]) => {
     const bad = entries.find((e) => !isEditableDate(e.date))
     if (bad) return Promise.reject(lockedError(bad.date))
+    const sick = sickLimitError(id, entries)
+    if (sick) return Promise.reject(sick)
     const created = entries.map<TimesheetEntry>((e) => ({ ...e, timesheetId: crypto.randomUUID(), employeeId: id, submitted: false, approved: false }))
     timesheets = [...timesheets, ...created]
     store(TS_KEY, timesheets)
@@ -251,4 +305,11 @@ export const mockApi: EmployeeApi = {
     store(PROFILE_KEY, profile)
     return delay(publicProfile())
   },
+
+  getSickDays: (id, year = new Date().getFullYear()) => {
+    const dates = sickDatesUsed(id, year)
+    return delay<SickDays>({ year, allowed: SICK_DAYS_PER_YEAR, used: dates.length, remaining: Math.max(SICK_DAYS_PER_YEAR - dates.length, 0), dates })
+  },
+
+  getStatHolidays: (year = new Date().getFullYear()) => delay(STAT_HOLIDAYS.filter((h) => h.date.startsWith(`${year}-`))),
 }
