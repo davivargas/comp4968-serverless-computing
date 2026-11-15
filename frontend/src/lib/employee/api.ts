@@ -4,7 +4,7 @@ import { MONTHS } from './dates'
 import { mockApi } from './mock'
 import type {
   AggregatePay, EmployeeProfile, Granularity, ISODate, NewTimesheetEntry, PayPeriod, PayStub, PayStubSummary,
-  ProfileUpdate, Project, TimesheetEntry,
+  ProfileUpdate, Project, SickDays, StatHoliday, TimesheetEntry,
 } from './types'
 
 /**
@@ -24,6 +24,10 @@ export interface EmployeeApi {
   getPayStub(employeeId: string, payDate: ISODate): Promise<PayStub>
   getProfile(employeeId: string): Promise<EmployeeProfile>
   updateProfile(employeeId: string, update: ProfileUpdate): Promise<EmployeeProfile>
+  /** Sick days used and left in a calendar year (default: this year). */
+  getSickDays(employeeId: string, year?: number): Promise<SickDays>
+  /** Stat holidays in a calendar year (default: this year), for colouring the timesheet. */
+  getStatHolidays(year?: number): Promise<StatHoliday[]>
 }
 
 // Trailing slashes are trimmed so ".../prod/" and ".../prod" both work.
@@ -89,6 +93,8 @@ const httpApi: EmployeeApi = {
   getPayStub: (id, payDate) => request(`/employee/${id}/pay-stubs/${payDate}`),
   getProfile: (id) => request(`/employee/${id}/profile`),
   updateProfile: (id, update) => request(`/employee/${id}/profile`, { method: 'PATCH', body: JSON.stringify(update) }),
+  getSickDays: (id, year) => request(`/employee/${id}/sick-days${qs({ year })}`),
+  getStatHolidays: (year) => request<{ holidays: StatHoliday[] }>(`/stat-holidays${qs({ year })}`).then((r) => r.holidays),
 }
 
 export const employeeApi: EmployeeApi = BASE_URL ? httpApi : mockApi

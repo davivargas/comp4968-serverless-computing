@@ -5,8 +5,27 @@ export type ISODate = string
 /** HH:mm, 24h */
 export type ClockTime = string
 
+/** System projects every employee can log to without being assigned (codes 9001, 9002, 9003). */
+export type SpecialProjectType = 'SICK' | 'VAC' | 'MISC'
+
 export interface Project {
   projectCode: string
+  name: string
+  /** Null for normal projects. */
+  specialType?: SpecialProjectType | null
+}
+
+/** GET /employee/{id}/sick-days: SICK entries count once per distinct date, per calendar year. */
+export interface SickDays {
+  year: number
+  allowed: number
+  used: number
+  remaining: number
+  dates: ISODate[]
+}
+
+export interface StatHoliday {
+  date: ISODate
   name: string
 }
 
@@ -106,22 +125,44 @@ export interface PayStubSummary {
   net: number
 }
 
-export type EarningLineType = 'PROJECT' | 'OVERTIME_PREMIUM' | 'VACATION'
+export type EarningLineType = 'PROJECT' | 'OVERTIME_PREMIUM' | 'WEEKEND_PREMIUM' | 'STAT_PREMIUM' | 'SICK' | 'VACATION'
 
 export interface PayStubLine {
   /** Set by the real backend; the mock only produces project lines. */
   lineType?: EarningLineType
-  /** Null on overtime-premium and vacation lines that aren't tied to a project. */
+  /** Null on premium and vacation pay lines that aren't tied to a project. */
   projectCode: string | number | null
   hours: number
   rate: number
   amount: number
 }
 
+export interface HoursAndPay {
+  hours: number
+  pay: number
+}
+
+/**
+ * Paid hours by kind. Weekend and stat holiday hours are paid at 1.5x (2x after 12h a day), sick hours at
+ * the normal rate. Vacation leave (VAC) hours are recorded but unpaid; vacationPay is the percentage-based pay.
+ */
+export interface HoursBreakdown {
+  regular: HoursAndPay
+  overtime: HoursAndPay
+  doubleOvertime: HoursAndPay
+  weekend: HoursAndPay
+  statHoliday: HoursAndPay
+  sick: HoursAndPay
+  vacationLeaveHours: number
+  vacationPay: number
+}
+
 export interface PayStub extends PayStubSummary {
   employeeId: string
   employeeName: string
   position: string
+  /** Older stubs from before the breakdown existed may not have it. */
+  hoursBreakdown?: HoursBreakdown
   earnings: PayStubLine[]
   deductions: Deductions
   ytd: { hours: number; gross: number; deductions: Deductions; net: number }
