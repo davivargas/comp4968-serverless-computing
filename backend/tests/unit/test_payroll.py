@@ -4,6 +4,7 @@ from fractions import Fraction
 
 import pytest
 
+from helpers.fakes import FakeDB
 from payroll_common import payroll
 from payroll_common.http_utils import HttpError
 from payroll_common.payroll import (
@@ -18,7 +19,8 @@ a pay period is released: overtime, premiums, vacation, CPP, EI and tax.
 Approach: pure functions with small inputs whose results were worked out
 by hand, in integer cents like the module itself. Paystub tests also
 check rules that hold for any input: the earnings lines add up to gross,
-and net pay is gross minus deductions.
+and net pay is gross minus deductions. The pay-period lookups that run
+SQL use helpers.fakes.FakeDB.
 """
 
 RATES = rates_for(2026)
@@ -354,3 +356,86 @@ def test_config_defaults_and_env_overrides(monkeypatch):
     monkeypatch.setenv("PAY_DATE_LAG_DAYS", "3")
     monkeypatch.setenv("SICK_DAYS_PER_YEAR", "8")
     assert cfg()["lag"] == 3 and sick_days_per_year() == 8
+
+
+# ---- pay-period lookups (SQL) ----------------------------------------
+
+@pytest.fixture
+def fake_db(monkeypatch):
+    """FakeDB behind payroll.query/one, with the default pay settings."""
+    fake = FakeDB()
+    monkeypatch.setattr(payroll, "query", fake.query)
+    monkeypatch.setattr(payroll, "one", fake.one)
+    monkeypatch.delenv("PAY_PERIOD_ANCHOR", raising=False)
+    monkeypatch.delenv("PAY_DATE_LAG_DAYS", raising=False)
+    return fake
+
+
+def test_ensure_periods_ignores_dates_before_the_anchor(fake_db):
+    """Nothing is created for dates before the first pay period."""
+    payroll.ensure_periods(None, datetime.date(2026, 1, 3))
+    assert fake_db.calls == []
+
+
+def test_ensure_periods_fills_in_missing_periods(fake_db):
+    """All 14-day periods from the anchor up to the date are created in
+    one statement; ON CONFLICT makes re-running harmless."""
+    payroll.ensure_periods(None, datetime.date(2026, 3, 1))
+    [(sql, params)] = fake_db.ran("INSERT INTO pay_period")
+    assert "ON CONFLICT (start_date) DO NOTHING" in sql
+    assert params == (START, START, START, 6, datetime.date(2026, 3, 1), START)
+
+
+def test_period_containing_creates_then_finds(fake_db):
+    """Looking up a date's period first makes sure that period exists."""
+    fake_db.on("BETWEEN start_date AND end_date", {"pay_period_id": 3})
+    assert payroll.period_containing(None, MON) == {"pay_period_id": 3}
+    statements = [sql for sql, _ in fake_db.calls]
+    assert len(statements) == 2
+    assert statements[0].startswith("INSERT INTO pay_period")
+    assert fake_db.params("BETWEEN start_date AND end_date") == [(MON,)]
+
+
+def test_sick_dates_cover_one_calendar_year(fake_db):
+    """Sick days are counted per calendar year (Jan 1 to Dec 31) for one
+    employee, from SICK projects only."""
+    fake_db.on("special_type = 'SICK'", [{"work_date": MON}, {"work_date": TUE}])
+    assert payroll.sick_dates_used(None, 7, 2026) == [MON, TUE]
+    expected = (7, datetime.date(2026, 1, 1), datetime.date(2026, 12, 31))
+    assert fake_db.params("special_type = 'SICK'") == [expected]
+
+
+def test_stat_dates_between_returns_a_set(fake_db):
+    """Stat holidays come back as a set of dates for quick lookups."""
+    fake_db.on("FROM stat_holiday", [{"holiday_date": MON}])
+    assert payroll.stat_dates_between(None, START, NEXT_MON) == {MON}
+    assert fake_db.params("FROM stat_holiday") == [(START, NEXT_MON)]
+
+
+def test_load_wages_groups_history_by_position(fake_db):
+    """Wage history comes back per position, oldest first, the shape
+    wage_for() expects."""
+    jan, jun = datetime.date(2026, 1, 1), datetime.date(2026, 6, 1)
+    fake_db.on("FROM position_wage", [
+        {"position_id": 3, "effective_from": jan, "hourly_wage": 20},
+        {"position_id": 3, "effective_from": jun, "hourly_wage": 25},
+        {"position_id": 4, "effective_from": jan, "hourly_wage": 30},
+    ])
+    wages = load_wages(None, {3, 4})
+    assert wages[3] == [(jan, 20), (jun, 25)] and wages[4] == [(jan, 30)]
+    [(ids,)] = fake_db.params("FROM position_wage")
+    assert sorted(ids) == [3, 4]
+
+
+def test_today_bc_uses_the_vancouver_date(monkeypatch):
+    """Cut-offs use BC's date, not UTC: at 07:30 UTC on Jan 1 it is
+    still Dec 31 in Vancouver."""
+    class FrozenDatetime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            utc = datetime.timezone.utc
+            moment = datetime.datetime(2026, 1, 1, 7, 30, tzinfo=utc)
+            return moment.astimezone(tz)
+
+    monkeypatch.setattr(payroll.datetime, "datetime", FrozenDatetime)
+    assert payroll.today_bc() == datetime.date(2025, 12, 31)
