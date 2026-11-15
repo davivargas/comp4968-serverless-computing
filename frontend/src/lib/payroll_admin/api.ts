@@ -1,7 +1,7 @@
 import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
-import type { CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position } from './types'
+import type { CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position, StatHoliday } from './types'
 
 export interface PayrollAdminApi {
   listEmployees(filters?: EmployeeFilters): Promise<EmployeeListResult>
@@ -11,6 +11,9 @@ export interface PayrollAdminApi {
   updatePosition(id: string, input: Partial<CreatePositionInput> & { isDeleted?: true }): Promise<Position | void>
   listPayPeriods(limit?: number, offset?: number): Promise<PayPeriod[]>
   releasePayroll(payPeriodId: string): Promise<PayrollReleaseResult>
+  listStatHolidays(year?: number): Promise<StatHoliday[]>
+  addStatHoliday(holiday: StatHoliday): Promise<StatHoliday>
+  deleteStatHoliday(date: string): Promise<void>
 }
 
 const BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '') || undefined
@@ -84,6 +87,9 @@ const httpApi: PayrollAdminApi = {
   updatePosition: (id, input) => request<Position | void>(`${PA_BASE_PATH}/positions/${id}`, send('PATCH', input)),
   listPayPeriods: (limit, offset) => request<{ payPeriods: PayPeriod[] }>(`${PA_BASE_PATH}/pay-periods${qs({ limit, offset })}`).then((r) => r.payPeriods),
   releasePayroll: (id) => request<PayrollReleaseResult>(`${PA_BASE_PATH}/payroll/${id}/release`, { method: 'PATCH' }),
+  listStatHolidays: (year) => request<{ holidays: StatHoliday[] }>(`/stat-holidays${qs({ year })}`).then((r) => r.holidays),
+  addStatHoliday: (holiday) => request<StatHoliday>(`${PA_BASE_PATH}/stat-holidays`, send('POST', holiday)),
+  deleteStatHoliday: (date) => request<void>(`${PA_BASE_PATH}/stat-holidays/${date}`, { method: 'DELETE' }),
 }
 
 export const payrollAdminApi: PayrollAdminApi = BASE_URL ? httpApi : mockApi

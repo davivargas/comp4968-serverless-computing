@@ -106,8 +106,10 @@ export interface PayrollReleaseResult {
   payPeriodId: string
   status: 'RELEASED'
   paystubsCreated: number
-  paystubs: Array<{ paystubId: string; employeeId: string; gross: number; net: number }>
+  paystubs: Array<{ paystubId: string; employeeId: string; gross: number; net: number; weekendHours?: number; statHolidayHours?: number; sickLeaveHours?: number; vacationLeaveHours?: number }>
 }
+
+export interface StatHoliday { date: string; name: string }
 
 export interface CreatePositionInput {
   title: string

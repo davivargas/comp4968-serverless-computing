@@ -1,5 +1,5 @@
 import type { PayrollAdminApi } from './api'
-import type { CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position } from './types'
+import type { CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position, StatHoliday } from './types'
 
 const KEY = 'mock.payroll-admin'
 const delay = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(structuredClone(value)), 220))
@@ -26,6 +26,7 @@ let periods: PayPeriod[] = [
   { payPeriodId: 'PP-2026-20', start: '2026-10-05', end: '2026-10-18', payDate: '2026-10-23', status: 'RELEASED', unapprovedCount: 0, employeeCount: 47, canRelease: false, releasedAt: '2026-10-20T15:12:00Z' },
   { payPeriodId: 'PP-2026-19', start: '2026-09-21', end: '2026-10-04', payDate: '2026-10-09', status: 'RELEASED', unapprovedCount: 0, employeeCount: 47, canRelease: false, releasedAt: '2026-10-06T16:02:00Z' },
 ]
+let holidays: StatHoliday[] = [{ date: '2026-01-01', name: "New Year's Day" }, { date: '2026-07-01', name: 'Canada Day' }, { date: '2026-12-25', name: 'Christmas Day' }]
 const load = () => { try { const raw = localStorage.getItem(KEY); if (raw) periods = JSON.parse(raw) as PayPeriod[] } catch { /* use seed */ } }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(periods)) } catch { /* memory fallback */ } }
 load()
@@ -40,4 +41,7 @@ export const mockApi: PayrollAdminApi = {
   updatePosition: (id, input) => { const p = positions.find((x) => x.positionId === id); if (!p) return Promise.reject(new Error('Position not found')); if (input.title) p.title = input.title; if (input.payGrade) p.payGrade = input.payGrade; if (input.hourlyRate && input.effectiveFrom) p.nextWage = { hourlyRate: input.hourlyRate, effectiveFrom: input.effectiveFrom }; return delay(p) },
   listPayPeriods: () => delay(periods),
   releasePayroll: (id) => { const p = periods.find((x) => x.payPeriodId === id); if (!p) return Promise.reject(new Error('Pay period not found')); if (!p.canRelease) return Promise.reject(new Error('This pay period is not ready for release')); p.status = 'RELEASED'; p.releasedAt = new Date().toISOString(); save(); const release: PayrollReleaseResult = { payPeriodId: id, status: 'RELEASED', paystubsCreated: employees.length, paystubs: employees.map((e) => ({ paystubId: `STUB-${e.id}`, employeeId: e.id, gross: e.gross, net: e.net })) }; return delay(release) },
+  listStatHolidays: (year = new Date().getFullYear()) => delay(holidays.filter((h) => Number(h.date.slice(0, 4)) === year)),
+  addStatHoliday: (holiday) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(holiday.date) || !holiday.name.trim()) return Promise.reject(new Error('Enter a valid date and holiday name')); if (holidays.some((h) => h.date === holiday.date)) return Promise.reject(new Error('A stat holiday already exists on this date')); if (periods.some((p) => p.status === 'RELEASED' && holiday.date >= p.start && holiday.date <= p.end)) return Promise.reject(new Error('The date falls inside a released pay period')); holidays = [...holidays, { ...holiday, name: holiday.name.trim() }].sort((a, b) => a.date.localeCompare(b.date)); return delay(holiday) },
+  deleteStatHoliday: (date) => { if (!holidays.some((h) => h.date === date)) return Promise.reject(new Error('Stat holiday not found')); if (periods.some((p) => p.status === 'RELEASED' && date >= p.start && date <= p.end)) return Promise.reject(new Error('The date falls inside a released pay period')); holidays = holidays.filter((h) => h.date !== date); return delay(undefined) },
 }
