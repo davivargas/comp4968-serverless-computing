@@ -9,7 +9,7 @@ import pytest
 
 
 BACKEND = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(BACKEND / "layers" / "python"))
+sys.path.insert(0, str(BACKEND / "layers" / "common" / "python"))
 SPEC = importlib.util.spec_from_file_location(
     "employee_pay", BACKEND / "functions" / "employee-pay" / "lambda_function.py"
 )
