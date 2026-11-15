@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,17 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND / "layers" / "python"))
+# Service dependencies are only used at runtime; all external calls are mocked here.
+sys.modules.setdefault("boto3", types.ModuleType("boto3"))
+pg8000 = types.ModuleType("pg8000")
+pg8000.dbapi = types.ModuleType("pg8000.dbapi")
+sys.modules.setdefault("pg8000", pg8000)
+sys.modules.setdefault("pg8000.dbapi", pg8000.dbapi)
+dateutil = types.ModuleType("dateutil")
+dateutil.relativedelta = types.ModuleType("dateutil.relativedelta")
+dateutil.relativedelta.relativedelta = object
+sys.modules.setdefault("dateutil", dateutil)
+sys.modules.setdefault("dateutil.relativedelta", dateutil.relativedelta)
 SPEC = importlib.util.spec_from_file_location(
     "employee_profiles", BACKEND / "functions" / "employee-profiles" / "lambda_function.py"
 )
