@@ -369,6 +369,42 @@ def test_update_position_upserts_wage_and_audits(monkeypatch, db, previous, acti
     )
 
 
+def test_update_position_allows_wage_when_no_period_has_been_released(monkeypatch, db):
+    one = Mock(side_effect=[
+        {"title": "Old", "pay_grade": "P1"},
+        {"latest_released_period_end": None},
+        None,
+    ])
+    query = Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", Mock())
+    monkeypatch.setattr(processing, "position_json", Mock(return_value={"positionId": 5}))
+
+    assert processing.update_position(event(path={"id": "5"}, body={
+        "hourlyRate": "25", "effectiveFrom": "2026-01-01",
+    }), ADMIN) == {"positionId": 5}
+    assert query.call_args.args[2] == (5, Decimal("25.00"), datetime.date(2026, 1, 1), 17)
+
+
+def test_update_position_returns_updated_position_without_deleting(monkeypatch, db):
+    one = Mock(return_value={"title": "Old", "pay_grade": "P1"})
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+    monkeypatch.setattr(processing, "position_json", Mock(return_value={"positionId": 5, "payGrade": "P2"}))
+
+    assert processing.update_position(event(path={"id": "5"}, body={"payGrade": "P2"}), ADMIN) == {
+        "positionId": 5, "payGrade": "P2"
+    }
+    assert query.call_count == 1
+    assert query.call_args.args[2] == ["P2", 5]
+    assert audit.call_args.args == (
+        db, ADMIN, "position", 5, "UPDATE", {"pay_grade": "P1"}, {"pay_grade": "P2"}
+    )
+
+
 def test_update_position_changes_fields_and_deletes_when_unassigned(monkeypatch, db):
     one = Mock(side_effect=[{"title": "Old", "pay_grade": "P1"}, None, None])
     query, audit = Mock(), Mock()
