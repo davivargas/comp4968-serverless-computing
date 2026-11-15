@@ -24,6 +24,9 @@ export const DEDUCTION_LABELS: Record<keyof Deductions, string> = {
 
 export const totalDeductions = (d: Deductions) => d.federalTax + d.provincialTax + d.cpp + d.ei
 
+/** The backend's fixed system project codes; pay stub lines only carry the code. */
+const SYSTEM_PROJECT_NAMES: Record<string, string> = { '9001': 'Sick day', '9002': 'Vacation day', '9003': 'Miscellaneous' }
+
 /** How an earnings line reads on a pay stub. A project can have both a project line and an overtime line. */
 export function earningLabel(line: PayStubLine): string {
   const code = line.projectCode === null || line.projectCode === undefined ? '' : String(line.projectCode)
@@ -32,7 +35,7 @@ export function earningLabel(line: PayStubLine): string {
   if (line.lineType === 'STAT_PREMIUM') return 'Stat holiday premium'
   if (line.lineType === 'SICK') return 'Sick pay'
   if (line.lineType === 'VACATION') return 'Vacation pay'
-  return code || 'Project'
+  return SYSTEM_PROJECT_NAMES[code] ?? (code || 'Project')
 }
 
 export interface BreakdownRow {
