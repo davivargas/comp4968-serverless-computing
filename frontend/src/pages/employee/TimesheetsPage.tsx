@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronLeft, ChevronRight, Lock, Plus, Save, Send, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Lock, Plus, Save, Send, Thermometer, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useEmployeeId } from '@/components/auth/session-context'
@@ -10,12 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { employeeApi } from '@/lib/employee/api'
 import { addDays, entryHours, formatDate, formatHours, fromISODate, minutesOf, startOfWeek, toISODate } from '@/lib/employee/dates'
-import type { NewTimesheetEntry, PayPeriod, Project, TimesheetEntry } from '@/lib/employee/types'
+import type { NewTimesheetEntry, PayPeriod, Project, SickDays, SpecialProjectType, TimesheetEntry } from '@/lib/employee/types'
 import { cn } from '@/lib/utils'
 
 /** A row on the board: either persisted (has saved) or a local draft. */
@@ -24,6 +24,15 @@ type Draft = NewTimesheetEntry & { draftId: string }
 type Editing = { date: string; row?: Row } | null
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/** Left-border colour of an entry on the board, by system project type. */
+const SPECIAL_ACCENT: Record<SpecialProjectType, string> = {
+  SICK: 'border-l-amber-500',
+  VAC: 'border-l-emerald-500',
+  MISC: 'border-l-slate-400',
+}
+
+const yearOf = (date: string) => Number(date.slice(0, 4))
 
 /** True when an arrow key on this element already means something (text fields, menus, dialogs, tabs). */
 function isInteractiveTarget(target: EventTarget | null) {
@@ -60,9 +69,14 @@ export default function TimesheetsPage() {
   const [busy, setBusy] = useState<'save' | 'submit' | null>(null)
   const [editing, setEditing] = useState<Editing>(null)
   const [confirmSubmit, setConfirmSubmit] = useState(false)
+  /** Sick days by calendar year, for the years this period touches. */
+  const [sickDays, setSickDays] = useState<Record<number, SickDays>>({})
+  /** Stat holiday name by date. */
+  const [holidays, setHolidays] = useState<Map<string, string>>(new Map())
 
   const dirty = drafts.length + pendingDeletes.size
   const projectName = useCallback((code: string) => projects.find((p) => p.projectCode === code)?.name ?? code, [projects])
+  const specialType = useCallback((code: string) => projects.find((p) => p.projectCode === code)?.specialType ?? null, [projects])
 
   useEffect(() => {
     employeeApi.getProjects(EMP).then(setProjects).catch((e) => toast.error(`Couldn't load projects: ${e.message}`))
@@ -97,6 +111,39 @@ export default function TimesheetsPage() {
     [saved, drafts, pendingDeletes],
   )
   const weeks = useMemo(() => (period ? periodWeeks(period) : []), [period])
+  const periodYears = useMemo(() => (period ? [...new Set([yearOf(period.start), yearOf(period.end)])] : []), [period])
+
+  // Stat holidays only colour the board, so a failure just leaves them uncoloured.
+  useEffect(() => {
+    let cancelled = false
+    Promise.all(periodYears.map((y) => employeeApi.getStatHolidays(y)))
+      .then((lists) => !cancelled && setHolidays(new Map(lists.flat().map((h) => [h.date, h.name]))))
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [periodYears])
+
+  // Refetched after every save, since saved SICK entries change the count.
+  useEffect(() => {
+    let cancelled = false
+    Promise.all(periodYears.map((y) => employeeApi.getSickDays(EMP, y)))
+      .then((list) => !cancelled && setSickDays(Object.fromEntries(list.map((d) => [d.year, d]))))
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [EMP, periodYears, saved])
+
+  /**
+   * Distinct sick dates in a year if `candidate` rows were what this period holds: the backend's dates outside
+   * this period, plus SICK rows on the board (which already include drafts and leave out pending deletes).
+   */
+  const sickDatesWith = useCallback((year: number, candidate: NewTimesheetEntry[]) => {
+    const outside = (sickDays[year]?.dates ?? []).filter((d) => !period || d < period.start || d > period.end)
+    const inside = candidate.filter((r) => specialType(r.projectCode) === 'SICK' && yearOf(r.date) === year).map((r) => r.date)
+    return new Set([...outside, ...inside])
+  }, [sickDays, period, specialType])
 
   const submitted = saved.length > 0 && saved.every((s) => s.submitted)
   const approved = submitted && saved.every((s) => s.approved)
@@ -253,6 +300,13 @@ export default function TimesheetsPage() {
           ) : (
             <Badge variant="outline">Open</Badge>
           )}
+          {periodYears.map((y) => sickDays[y] && (
+            <span key={y} className="flex items-center gap-1 text-muted-foreground" title={`Sick days left in ${y}, counting unsaved changes`}>
+              <Thermometer className="size-3.5" />
+              <span className="font-medium text-foreground tabular-nums">{Math.max(sickDays[y].allowed - sickDatesWith(y, rows).size, 0)}</span>
+              of {sickDays[y].allowed} sick days left{periodYears.length > 1 ? ` (${y})` : ''}
+            </span>
+          ))}
           <span className="text-muted-foreground">
             Total <span className="font-semibold text-foreground tabular-nums">{formatHours(totalHours)}</span>
           </span>
@@ -278,8 +332,9 @@ export default function TimesheetsPage() {
               const dayRows = rows.filter((r) => r.date === iso)
               const hours = dayRows.reduce((n, r) => n + entryHours(r), 0)
               const weekend = day.getDay() % 6 === 0
+              const holiday = holidays.get(iso)
               return (
-                <div key={iso} className={cn('flex min-h-40 flex-col rounded-lg border bg-card', weekend && 'bg-muted/40')}>
+                <div key={iso} className={cn('flex min-h-40 flex-col rounded-lg border bg-card', weekend && 'bg-muted/40', holiday && 'border-primary/40 bg-primary/5')}>
                   <div className="flex items-baseline justify-between border-b px-3 py-1.5">
                     <div className="flex items-baseline gap-1.5">
                       <span className={cn('text-base font-semibold', iso === today && 'text-primary')}>{day.getDate()}</span>
@@ -290,21 +345,29 @@ export default function TimesheetsPage() {
                     </div>
                     <span className={cn('text-xs tabular-nums', hours ? 'font-medium' : 'text-muted-foreground')}>{formatHours(hours)}</span>
                   </div>
+                  {holiday && (
+                    <div className="truncate px-3 pt-1 text-[11px] font-medium text-primary" title={`${holiday} (stat holiday: hours worked are paid at 1.5x)`}>
+                      {holiday}
+                    </div>
+                  )}
                   <div className="flex flex-1 flex-col gap-1.5 p-1.5">
-                    {dayRows.map((r) => (
+                    {dayRows.map((r) => {
+                      const special = specialType(r.projectCode)
+                      return (
                       <button
                         key={r.key}
                         type="button"
                         disabled={locked}
                         onClick={() => setEditing({ date: iso, row: r })}
                         className={cn(
-                          'rounded-md border border-l-4 border-l-primary bg-background px-2 py-1 text-left text-xs transition-colors',
+                          'rounded-md border border-l-4 bg-background px-2 py-1 text-left text-xs transition-colors',
+                          special ? SPECIAL_ACCENT[special] : 'border-l-primary',
                           !locked && 'hover:bg-muted',
                           !r.saved && 'border-dashed',
                         )}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <span className="font-semibold">{r.projectCode}</span>
+                          <span className="truncate font-semibold" title={projectName(r.projectCode)}>{special ? projectName(r.projectCode) : r.projectCode}</span>
                           <span className="tabular-nums">{formatHours(entryHours(r))}</span>
                         </div>
                         <div className="flex items-center justify-between text-muted-foreground tabular-nums">
@@ -312,7 +375,8 @@ export default function TimesheetsPage() {
                           {!r.saved && <span className="text-[10px] font-medium uppercase text-primary">Unsaved</span>}
                         </div>
                       </button>
-                    ))}
+                      )
+                    })}
                     {!locked && (
                       <Button variant="ghost" size="xs" className="mt-auto w-full justify-start text-muted-foreground" onClick={() => setEditing({ date: iso })}>
                         <Plus />
@@ -340,6 +404,9 @@ export default function TimesheetsPage() {
         editing={editing}
         projects={projects}
         rows={rows}
+        holidays={holidays}
+        sickDays={sickDays}
+        sickDatesWith={sickDatesWith}
         minDate={period.start}
         maxDate={period.end}
         onClose={() => setEditing(null)}
@@ -416,11 +483,15 @@ function SummaryTable({ rows, weeks, projectName }: { rows: Row[]; weeks: (Date 
 }
 
 function EntryDialog({
-  editing, projects, rows, minDate, maxDate, onClose, onSave, onDelete,
+  editing, projects, rows, holidays, sickDays, sickDatesWith, minDate, maxDate, onClose, onSave, onDelete,
 }: {
   editing: Editing
   projects: Project[]
   rows: Row[]
+  holidays: Map<string, string>
+  sickDays: Record<number, SickDays>
+  sickDatesWith: (year: number, candidate: NewTimesheetEntry[]) => Set<string>
+
   minDate: string
   maxDate: string
   onClose: () => void
@@ -449,6 +520,16 @@ function EntryDialog({
     (r) => r.key !== editing?.row?.key && r.date === form.date &&
       minutesOf(form.startTime) < minutesOf(r.endTime) && minutesOf(r.startTime) < minutesOf(form.endTime),
   )
+  const isSick = projects.find((p) => p.projectCode === form.projectCode)?.specialType === 'SICK'
+  const sickYear = form.date ? yearOf(form.date) : null
+  const sickAllowed = sickYear !== null ? sickDays[sickYear]?.allowed : undefined
+  const sickUsed = isSick && sickYear !== null
+    ? sickDatesWith(sickYear, [...rows.filter((r) => r.key !== editing?.row?.key), form]).size
+    : 0
+  const holiday = form.date ? holidays.get(form.date) : undefined
+  const regular = projects.filter((p) => !p.specialType)
+  const special = projects.filter((p) => p.specialType)
+
   const error = !form.projectCode
     ? 'Choose a project.'
     : !form.date || form.date < minDate || form.date > maxDate
@@ -457,7 +538,9 @@ function EntryDialog({
         ? 'End time must be after start time.'
         : overlap
           ? `Overlaps ${overlap.projectCode} ${overlap.startTime}–${overlap.endTime}.`
-          : null
+          : isSick && sickAllowed !== undefined && sickUsed > sickAllowed
+            ? `You've used all ${sickAllowed} sick days for ${sickYear}.`
+            : null
 
   return (
     <Dialog open={editing !== null} onOpenChange={(o) => !o && onClose()}>
@@ -482,18 +565,41 @@ function EntryDialog({
                 <SelectValue placeholder="Select a project" />
               </SelectTrigger>
               <SelectContent>
-                {projects.map((p) => (
+                {regular.map((p) => (
                   <SelectItem key={p.projectCode} value={p.projectCode}>
                     <span className="font-medium">{p.projectCode}</span>
                     <span className="text-muted-foreground">{p.name}</span>
                   </SelectItem>
                 ))}
+                {special.length > 0 && (
+                  <>
+                    {regular.length > 0 && <SelectSeparator />}
+                    <SelectGroup>
+                      <SelectLabel>Leave and other</SelectLabel>
+                      {special.map((p) => (
+                        <SelectItem key={p.projectCode} value={p.projectCode}>
+                          <span className="font-medium">{p.name}</span>
+                          <span className="text-muted-foreground">{p.projectCode}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
               </SelectContent>
             </Select>
+            {isSick && sickAllowed !== undefined && (
+              <p className="text-xs text-muted-foreground">
+                Paid at your normal rate. {Math.max(sickAllowed - sickUsed, 0)} of {sickAllowed} sick days left in {sickYear} after this entry.
+              </p>
+            )}
+            {projects.find((p) => p.projectCode === form.projectCode)?.specialType === 'VAC' && (
+              <p className="text-xs text-muted-foreground">Vacation days are recorded but not paid as hours.</p>
+            )}
           </div>
           <div className="grid gap-2">
             <Label htmlFor="date">Date</Label>
             <Input id="date" type="date" min={minDate} max={maxDate} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            {holiday && <p className="text-xs text-primary">{holiday}: stat holiday, hours worked are paid at 1.5x.</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
