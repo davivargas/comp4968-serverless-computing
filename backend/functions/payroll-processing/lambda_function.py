@@ -650,7 +650,11 @@ def delete_stat_holiday(event, request_context):
 
 lambda_handler = router({
     "GET /pa/pay-periods": with_auth(PAYROLL_ADMIN_ROLES, list_periods),
+    "PATCH /pa/payroll/{id}/release": with_auth(PAYROLL_ADMIN_ROLES, release),
     "GET /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, list_positions),
     "POST /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, create_position),
     "PATCH /pa/positions/{id}": with_auth(PAYROLL_ADMIN_ROLES, update_position),
+    "GET /stat-holidays": with_auth([], list_stat_holidays),
+    "POST /pa/stat-holidays": with_auth(PAYROLL_ADMIN_ROLES, add_stat_holiday),
+    "DELETE /pa/stat-holidays/{date}": with_auth(PAYROLL_ADMIN_ROLES, delete_stat_holiday),
 })
