@@ -8,7 +8,7 @@ import pytest
 
 
 BACKEND = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(BACKEND / "layers" / "python"))
+sys.path.insert(0, str(BACKEND / "layers" / "common" / "python"))
 # Service dependencies are only used at runtime; all external calls are mocked here.
 sys.modules.setdefault("boto3", types.ModuleType("boto3"))
 pg8000 = types.ModuleType("pg8000")
