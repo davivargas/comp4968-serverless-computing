@@ -6,6 +6,7 @@ from payroll_common.auth import assert_self, with_auth
 from payroll_common.db import get_conn, one, query
 from payroll_common.http_utils import HttpError, qs, router
 from payroll_common.payroll import deductions_json, mask, today_bc
+from payroll_common.shapes import PAID_HOURS_SQL
 from payroll_common.validate import one_of, opt_date, opt_int, path_id, require_date
 
 EMP = ["EMPLOYEE"]
@@ -33,7 +34,7 @@ def aggregate_pay(event, ctx):
     granularity = one_of(query_parameters.get("granularity", "ytd"), "granularity", list(GROUP))
     year = opt_int(query_parameters.get("year"), "year") or today_bc().year
     pay_period_rows = query(get_conn(), f"""
-        SELECT {GROUP[granularity]} AS period_key, SUM(ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours) AS hours, SUM(ps.gross_pay) AS gross,
+        SELECT {GROUP[granularity]} AS period_key, SUM({PAID_HOURS_SQL}) AS hours, SUM(ps.gross_pay) AS gross,
                SUM(ps.federal_tax) AS federal_tax, SUM(ps.provincial_tax) AS provincial_tax, SUM(ps.cpp) AS cpp, SUM(ps.ei) AS ei,
                SUM(ps.net_pay) AS net
           FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
@@ -57,7 +58,7 @@ def list_stubs(event, ctx):
         if pay_date_boundary:
             where_conditions.append(f"pp.pay_date {comparison_operator} %s")
             query_values.append(pay_date_boundary)
-    paystub_rows = query(get_conn(), f"""SELECT pp.pay_date, pp.start_date, pp.end_date, ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours AS hours,
+    paystub_rows = query(get_conn(), f"""SELECT pp.pay_date, pp.start_date, pp.end_date, {PAID_HOURS_SQL} AS hours,
                                         ps.gross_pay, ps.net_pay
                                    FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
                                   WHERE {' AND '.join(where_conditions)} ORDER BY pp.pay_date DESC""", query_values)
@@ -83,7 +84,16 @@ def get_stub(event, ctx):
         "employeeId": paystub["employee_id"], "employeeName": paystub["employee_name"],
         "position": paystub["position_title"], "payDate": paystub["pay_date"],
         "periodStart": paystub["start_date"], "periodEnd": paystub["end_date"],
-        "hours": round(float(paystub["regular_hours"] + paystub["overtime_hours"] + paystub["double_overtime_hours"]), 2),
+        "hours": round(float(paystub["regular_hours"] + paystub["overtime_hours"] + paystub["double_overtime_hours"]
+                             + paystub["weekend_hours"] + paystub["stat_hours"] + paystub["sick_hours"]), 2),
+        "hoursBreakdown": {
+            "regular": {"hours": paystub["regular_hours"], "pay": paystub["regular_pay"]},
+            "overtime": {"hours": paystub["overtime_hours"], "pay": paystub["overtime_pay"]},
+            "doubleOvertime": {"hours": paystub["double_overtime_hours"], "pay": paystub["double_overtime_pay"]},
+            "weekend": {"hours": paystub["weekend_hours"], "pay": paystub["weekend_pay"]},
+            "statHoliday": {"hours": paystub["stat_hours"], "pay": paystub["stat_pay"]},
+            "sick": {"hours": paystub["sick_hours"], "pay": paystub["sick_pay"]},
+            "vacationLeaveHours": paystub["vacation_leave_hours"], "vacationPay": paystub["vacation_pay"]},
         "gross": paystub["gross_pay"], "net": paystub["net_pay"],
         "earnings": [{"lineType": earning_line["line_type"], "projectCode": earning_line["project_code"],
                       "hours": earning_line["hours"], "rate": earning_line["rate"],
