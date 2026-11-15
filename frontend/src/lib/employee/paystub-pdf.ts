@@ -18,8 +18,8 @@ export function downloadPayStubPdf(stub: PayStub) {
     ['Position', stub.position],
     ['Pay date', formatDate(stub.payDate)],
     ['Pay period', `${formatDate(stub.periodStart)} – ${formatDate(stub.periodEnd)}`],
-    // jsPDF throws on a null string, and there's no account when direct deposit isn't set up.
-    ['Deposited to', stub.depositAccount ?? 'No direct deposit on file'],
+    // jsPDF throws on a null string. With no direct deposit on file, the employee is paid by cheque.
+    stub.depositAccount ? ['Deposited to', stub.depositAccount] : ['Paid by', 'Cheque'],
   ]
   meta.forEach(([k, v], i) => {
     doc.setFont('helvetica', 'bold').text(k, x, 92 + i * 15)

@@ -184,7 +184,7 @@ function StubDetail({ stub }: { stub: PayStub }) {
       <DialogHeader>
         <DialogTitle>Pay statement · {formatDate(stub.payDate)}</DialogTitle>
         <DialogDescription>
-          Period {formatDate(stub.periodStart)} – {formatDate(stub.periodEnd)}{stub.depositAccount ? ` · deposited to ${stub.depositAccount}` : ' · no direct deposit on file'}
+          Period {formatDate(stub.periodStart)} – {formatDate(stub.periodEnd)}{stub.depositAccount ? ` · deposited to ${stub.depositAccount}` : ' · paid by cheque'}
         </DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-3 gap-4 rounded-lg border p-4">

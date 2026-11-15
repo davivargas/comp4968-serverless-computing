@@ -146,9 +146,11 @@
   }
 }
 
-/* Tick the mascot: blinks, glances around, raises its brows and jiggles its bells in time with the pogo hop. */
+/* Penny the mascot: blinks, glances around, checks the time with its gloved hands, raises its brows and jiggles its bells in time with the pogo hop. */
 @theme {
   --animate-blink: blink 4s infinite;
+  --animate-blink-once: blink-once 0.3s ease-in-out;
+  --animate-fold: fold 1.2s ease-in-out;
   --animate-glance: glance 6s ease-in-out infinite;
   --animate-brows: brows 0.9s ease-in-out infinite;
   --animate-bell: bell 0.9s ease-in-out infinite;
@@ -162,6 +164,15 @@
   @keyframes blink {
     0%, 93%, 100% { transform: scaleY(1); }
     96% { transform: scaleY(0.1); }
+  }
+  @keyframes blink-once {
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(0.1); }
+  }
+  /* The hands pull in to half length mid-swing, then reach back out to point at the time. */
+  @keyframes fold {
+    0%, 100% { scale: 1; }
+    45% { scale: 0.45; }
   }
   @keyframes glance {
     0%, 20%, 100% { translate: 0 0; }
