@@ -40,15 +40,17 @@ not instructions to execute requests against a live service.
 | POST | `/manager/{id}/assign-employee` | Project ID; `{ employeeId }` | `201 { projectId, employeeId, alreadyAssigned: false }`, or `200` with `alreadyAssigned: true` |
 
 The employee-list client currently exposes only the optional `projectId` filter; the UI displays the returned order.
-The timesheet UI uses date descending order and pages of 50; the client also supports the workbook's sort fields.
+The timesheet UI shows one summary per employee for the selected backend pay period. It loads all
+entry pages (200 per request) before calculating totals, then filters the complete summaries locally.
+Opening a summary shows all dates and projects, total hours, and whole-period review actions.
 
 ### Timesheet retrieval
 
 `status` is `pending` (submitted and not approved), `approved`, or `unsubmitted`.
 Omit it for every status. `from`/`to` are inclusive. `sort` is `date` or `employee`,
 `order` is `asc` or `desc` (default newest date first). `limit` is 1–200, default 50;
-`offset` is nonnegative. The workbook supplies no total count; the UI allows a next page
-when the current page is full and handles an empty final page.
+`offset` is nonnegative. The workbook supplies no total count; the summary loader requests pages
+until it receives a short page, including an empty final page when necessary.
 
 ```json
 {
@@ -76,16 +78,20 @@ X-Active-Role: MANAGER
 Approval sets `submitted=true`, `approved=true` on every entry in the range. Return `409`
 when no entries are submitted or any entry is unsubmitted. Rejection uses `/reject`, sets both
 flags to false, and returns `409` if no entry is submitted. Apply changes atomically to the complete period.
-The UI confirms the employee and dates and explicitly includes entries hidden by the status filter.
+The UI confirms the employee and dates inside the detail dialog. The status filter applies to complete
+employee summaries; it never hides individual entries from the detail view or from review actions.
+Summary statuses are Approved (all approved), Pending (all submitted, at least one unapproved),
+Partially submitted (some submitted), and Unsubmitted (none submitted). Days logged counts distinct
+dates, not individual entries. Approval is disabled until every entry is submitted.
 
 The workbook's mutation responses use the base employee `TimesheetEntry` fields, without employee/project
 display names. The UI ignores the mutation payload and reloads the list. The mock returns enriched rows.
 
-The backend must validate that the dates describe one complete backend-owned pay period and authorize
-the employee relationship. The demo uses the existing employee mock's 14-day schedule, anchored at
-2025-01-06; its initial review dates are 2026-11-09 through 2026-11-22. Before live integration,
-connect the manager period picker to an authorized backend schedule source rather than calculating it
-in the UI. The workbook does not specify a dedicated manager pay-period endpoint.
+The backend must validate review dates and authorize the employee relationship. The period picker
+uses `GET /employee/{signedInEmployeeId}/pay-period?date=` through the existing employee client
+(every manager also has Employee access). It starts with the current backend period and asks for
+the period containing a chosen date or the adjacent period; it does not calculate payroll boundaries.
+The workbook does not specify a dedicated manager pay-period endpoint.
 
 ### Projects and assignments
 
