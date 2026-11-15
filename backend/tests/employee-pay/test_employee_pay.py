@@ -135,3 +135,109 @@ def test_aggregate_pay_rejects_invalid_query_before_database(
 
     assert exc.value.status == 400
     assert str(exc.value) == message
+
+
+def test_employee_pay_endpoints_reject_other_employees_before_database(monkeypatch):
+    monkeypatch.setattr(employee_pay, "get_conn", lambda: pytest.fail("database should not be reached"))
+    event = {"pathParameters": {"id": "18", "payDate": "2026-11-13"}}
+
+    for endpoint in (employee_pay.aggregate_pay, employee_pay.list_stubs, employee_pay.get_stub):
+        with pytest.raises(employee_pay.HttpError) as exc:
+            endpoint(event, {"employee_id": 17})
+        assert exc.value.status == 403
+        assert str(exc.value) == "You can only access your own records"
+
+
+@pytest.mark.parametrize(
+    "endpoint, event",
+    [
+        (employee_pay.aggregate_pay, {"pathParameters": {"id": "not-an-id"}}),
+        (employee_pay.list_stubs, {"pathParameters": {"id": "not-an-id"}}),
+        (
+            employee_pay.get_stub,
+            {"pathParameters": {"id": "not-an-id", "payDate": "2026-11-13"}},
+        ),
+    ],
+)
+def test_employee_pay_endpoints_reject_invalid_employee_ids_before_database(
+    monkeypatch, endpoint, event
+):
+    monkeypatch.setattr(employee_pay, "get_conn", lambda: pytest.fail("database should not be reached"))
+
+    with pytest.raises(employee_pay.HttpError) as exc:
+        endpoint(event, {"employee_id": 17})
+
+    assert exc.value.status == 400
+    assert str(exc.value) == "id must be an integer"
+
+
+def test_list_stubs_applies_both_pay_date_bounds_and_shapes_rows(monkeypatch):
+    calls = []
+    rows = [
+        {
+            "pay_date": datetime.date(2026, 11, 13),
+            "start_date": datetime.date(2026, 10, 26),
+            "end_date": datetime.date(2026, 11, 8),
+            "hours": Decimal("80"),
+            "gross_pay": Decimal("4000"),
+            "net_pay": Decimal("3190"),
+        }
+    ]
+    monkeypatch.setattr(employee_pay, "get_conn", lambda: "connection")
+    monkeypatch.setattr(employee_pay, "query", lambda conn, sql, params: calls.append((sql, params)) or rows)
+
+    result = employee_pay.list_stubs(
+        {
+            "pathParameters": {"id": "17"},
+            "queryStringParameters": {"from": "2026-01-01", "to": "2026-12-31"},
+        },
+        {"employee_id": 17},
+    )
+
+    assert result == {
+        "payStubs": [{
+            "payDate": datetime.date(2026, 11, 13),
+            "periodStart": datetime.date(2026, 10, 26),
+            "periodEnd": datetime.date(2026, 11, 8),
+            "hours": Decimal("80"),
+            "gross": Decimal("4000"),
+            "net": Decimal("3190"),
+        }]
+    }
+    sql, params = calls[0]
+    assert "pp.pay_date >= %s" in sql
+    assert "pp.pay_date <= %s" in sql
+    assert "ORDER BY pp.pay_date DESC" in sql
+    assert params == [17, datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)]
+
+
+def test_list_stubs_without_filters_returns_empty_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(employee_pay, "get_conn", lambda: "connection")
+    monkeypatch.setattr(employee_pay, "query", lambda conn, sql, params: calls.append((sql, params)) or [])
+
+    assert employee_pay.list_stubs(
+        {"pathParameters": {"id": "17"}, "queryStringParameters": None},
+        {"employee_id": 17},
+    ) == {"payStubs": []}
+    assert calls[0][1] == [17]
+    assert "pp.pay_date >=" not in calls[0][0]
+    assert "pp.pay_date <=" not in calls[0][0]
+
+
+@pytest.mark.parametrize("parameter", ["from", "to"])
+@pytest.mark.parametrize("invalid_date", ["2026-02-30", "11/13/2026"])
+def test_list_stubs_rejects_invalid_date_filters(monkeypatch, parameter, invalid_date):
+    monkeypatch.setattr(employee_pay, "get_conn", lambda: pytest.fail("database should not be reached"))
+
+    with pytest.raises(employee_pay.HttpError) as exc:
+        employee_pay.list_stubs(
+            {
+                "pathParameters": {"id": "17"},
+                "queryStringParameters": {parameter: invalid_date},
+            },
+            {"employee_id": 17},
+        )
+
+    assert exc.value.status == 400
+    assert str(exc.value) == f"{parameter} must be a date (YYYY-MM-DD)"
