@@ -6,6 +6,7 @@ from payroll_common.auth import assert_self, with_auth
 from payroll_common.db import get_conn, one, query
 from payroll_common.http_utils import HttpError, qs, router
 from payroll_common.payroll import deductions_json, mask, today_bc
+from payroll_common.shapes import PAID_HOURS_SQL
 from payroll_common.validate import one_of, opt_date, opt_int, path_id, require_date
 
 EMP = ["EMPLOYEE"]
@@ -33,7 +34,7 @@ def aggregate_pay(event, ctx):
     granularity = one_of(query_parameters.get("granularity", "ytd"), "granularity", list(GROUP))
     year = opt_int(query_parameters.get("year"), "year") or today_bc().year
     pay_period_rows = query(get_conn(), f"""
-        SELECT {GROUP[granularity]} AS period_key, SUM(ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours) AS hours, SUM(ps.gross_pay) AS gross,
+        SELECT {GROUP[granularity]} AS period_key, SUM({PAID_HOURS_SQL}) AS hours, SUM(ps.gross_pay) AS gross,
                SUM(ps.federal_tax) AS federal_tax, SUM(ps.provincial_tax) AS provincial_tax, SUM(ps.cpp) AS cpp, SUM(ps.ei) AS ei,
                SUM(ps.net_pay) AS net
           FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
