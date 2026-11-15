@@ -617,6 +617,37 @@ def add_stat_holiday(event, request_context):
     return created({"date": holiday_date, "name": name})
 
 
+def delete_stat_holiday(event, request_context):
+    """DELETE /pa/stat-holidays/{date}"""
+    holiday_date = require_date((event.get("pathParameters") or {}).get("date"), "date")
+
+    with transaction() as connection:
+        old_holiday = one(
+            connection,
+            "SELECT holiday_date, name FROM stat_holiday WHERE holiday_date = %s FOR UPDATE",
+            (holiday_date,)
+        )
+
+        if not old_holiday:
+            raise HttpError(404, "That date is not a stat holiday")
+
+        assert_date_not_released(connection, holiday_date)
+
+        query(connection, "DELETE FROM stat_holiday WHERE holiday_date = %s", (holiday_date,))
+
+        audit(
+            connection,
+            request_context,
+            "stat_holiday",
+            holiday_date.isoformat(),
+            "DELETE",
+            {"holiday_date": old_holiday["holiday_date"], "name": old_holiday["name"]},
+            None
+        )
+
+    return no_content()
+
+
 lambda_handler = router({
     "GET /pa/pay-periods": with_auth(PAYROLL_ADMIN_ROLES, list_periods),
     "GET /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, list_positions),
