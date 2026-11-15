@@ -84,7 +84,16 @@ def get_stub(event, ctx):
         "employeeId": paystub["employee_id"], "employeeName": paystub["employee_name"],
         "position": paystub["position_title"], "payDate": paystub["pay_date"],
         "periodStart": paystub["start_date"], "periodEnd": paystub["end_date"],
-        "hours": round(float(paystub["regular_hours"] + paystub["overtime_hours"] + paystub["double_overtime_hours"]), 2),
+        "hours": round(float(paystub["regular_hours"] + paystub["overtime_hours"] + paystub["double_overtime_hours"]
+                             + paystub["weekend_hours"] + paystub["stat_hours"] + paystub["sick_hours"]), 2),
+        "hoursBreakdown": {
+            "regular": {"hours": paystub["regular_hours"], "pay": paystub["regular_pay"]},
+            "overtime": {"hours": paystub["overtime_hours"], "pay": paystub["overtime_pay"]},
+            "doubleOvertime": {"hours": paystub["double_overtime_hours"], "pay": paystub["double_overtime_pay"]},
+            "weekend": {"hours": paystub["weekend_hours"], "pay": paystub["weekend_pay"]},
+            "statHoliday": {"hours": paystub["stat_hours"], "pay": paystub["stat_pay"]},
+            "sick": {"hours": paystub["sick_hours"], "pay": paystub["sick_pay"]},
+            "vacationLeaveHours": paystub["vacation_leave_hours"], "vacationPay": paystub["vacation_pay"]},
         "gross": paystub["gross_pay"], "net": paystub["net_pay"],
         "earnings": [{"lineType": earning_line["line_type"], "projectCode": earning_line["project_code"],
                       "hours": earning_line["hours"], "rate": earning_line["rate"],
