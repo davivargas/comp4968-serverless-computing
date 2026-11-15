@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { employeeApi } from '@/lib/employee/api'
 import { formatDate, formatHours, formatMoney, toISODate } from '@/lib/employee/dates'
-import { DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from '@/lib/employee/pay'
+import { breakdownRows, DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from '@/lib/employee/pay'
 import type { Deductions, PayStub, PayStubSummary } from '@/lib/employee/types'
 
 /** How far back the date dropdowns reach. */
@@ -178,6 +178,7 @@ function DateSelect({ id, value, options, onChange, disable }: { id: string; val
 
 function StubDetail({ stub }: { stub: PayStub }) {
   const keys = Object.keys(DEDUCTION_LABELS) as (keyof Deductions)[]
+  const breakdown = breakdownRows(stub.hoursBreakdown)
   return (
     <>
       <DialogHeader>
@@ -229,6 +230,27 @@ function StubDetail({ stub }: { stub: PayStub }) {
           </TableRow>
         </TableFooter>
       </Table>
+
+      {breakdown.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Hours by type</TableHead>
+              <TableHead className="text-right">Hours</TableHead>
+              <TableHead className="text-right">Pay</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {breakdown.map((r) => (
+              <TableRow key={r.label}>
+                <TableCell>{r.label}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatHours(r.hours)}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.pay === null ? '—' : formatMoney(r.pay)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
 
       <Separator />
 

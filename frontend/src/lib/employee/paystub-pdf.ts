@@ -2,7 +2,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatDate, formatMoney } from './dates'
-import { DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from './pay'
+import { breakdownRows, DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from './pay'
 import type { Deductions, PayStub } from './types'
 
 export function downloadPayStubPdf(stub: PayStub) {
@@ -52,9 +52,23 @@ export function downloadPayStubPdf(stub: PayStub) {
     margin: { left: x, right: 48 },
   })
 
+  const lastY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY
+  const breakdown = breakdownRows(stub.hoursBreakdown)
+  if (breakdown.length) {
+    autoTable(doc, {
+      startY: lastY() + 20,
+      head: [['Hours by type', 'Hours', 'Pay']],
+      body: breakdown.map((r) => [r.label, r.hours.toFixed(2), r.pay === null ? '—' : formatMoney(r.pay)]),
+      headStyles: head,
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      didParseCell: alignFoot,
+      margin: { left: x, right: 48 },
+    })
+  }
+
   const keys = Object.keys(DEDUCTION_LABELS) as (keyof Deductions)[]
   autoTable(doc, {
-    startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 20,
+    startY: lastY() + 20,
     head: [['Deductions', 'Current', 'Year to date']],
     body: keys.map((k) => [DEDUCTION_LABELS[k], formatMoney(stub.deductions[k]), formatMoney(stub.ytd.deductions[k])]),
     foot: [

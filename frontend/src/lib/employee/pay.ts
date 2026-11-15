@@ -1,4 +1,4 @@
-import type { Deductions, PayStubLine } from './types'
+import type { Deductions, HoursBreakdown, PayStubLine } from './types'
 
 export type PaySlice = 'net' | keyof Deductions
 
@@ -28,8 +28,33 @@ export const totalDeductions = (d: Deductions) => d.federalTax + d.provincialTax
 export function earningLabel(line: PayStubLine): string {
   const code = line.projectCode === null || line.projectCode === undefined ? '' : String(line.projectCode)
   if (line.lineType === 'OVERTIME_PREMIUM') return code ? `Overtime premium · ${code}` : 'Overtime premium'
+  if (line.lineType === 'WEEKEND_PREMIUM') return 'Weekend premium'
+  if (line.lineType === 'STAT_PREMIUM') return 'Stat holiday premium'
+  if (line.lineType === 'SICK') return 'Sick pay'
   if (line.lineType === 'VACATION') return 'Vacation pay'
   return code || 'Project'
+}
+
+export interface BreakdownRow {
+  label: string
+  hours: number
+  /** Null for vacation leave, which is recorded but unpaid. */
+  pay: number | null
+}
+
+/** The stub's hours by kind, skipping kinds with no hours and no pay. Empty when the stub has no breakdown. */
+export function breakdownRows(b: HoursBreakdown | undefined): BreakdownRow[] {
+  if (!b) return []
+  const rows: BreakdownRow[] = [
+    { label: 'Regular', ...b.regular },
+    { label: 'Overtime (1.5x)', ...b.overtime },
+    { label: 'Double overtime (2x)', ...b.doubleOvertime },
+    { label: 'Weekend (1.5x)', ...b.weekend },
+    { label: 'Stat holiday (1.5x)', ...b.statHoliday },
+    { label: 'Sick', ...b.sick },
+    { label: 'Vacation leave (unpaid)', hours: b.vacationLeaveHours, pay: null },
+  ]
+  return rows.filter((r) => r.hours || r.pay)
 }
 
 /**
