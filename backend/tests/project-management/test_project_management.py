@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,10 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND / "layers" / "python"))
+pg8000 = types.ModuleType("pg8000")
+pg8000.dbapi = types.ModuleType("pg8000.dbapi")
+sys.modules.setdefault("pg8000", pg8000)
+sys.modules.setdefault("pg8000.dbapi", pg8000.dbapi)
 SPEC = importlib.util.spec_from_file_location(
     "project_management", BACKEND / "functions" / "project-management" / "lambda_function.py"
 )
@@ -96,7 +101,8 @@ def test_create_project_allocates_code_and_returns_created_response(monkeypatch)
     assert json.loads(response["body"]) == {
         "projectId": 5, "projectCode": 23, "name": "Migration", "status": "ACTIVE", "employeeCount": 0,
     }
-    assert calls[1][1] == (7,)
+    assert calls[1][1] == (23, "Migration", 7)
+    assert calls[2][1] == (5,)
 
 
 @pytest.mark.parametrize("body, status, message", [
