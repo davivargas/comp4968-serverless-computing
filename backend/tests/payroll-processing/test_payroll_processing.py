@@ -570,3 +570,79 @@ def test_delete_stat_holiday_rejects_invalid_date_before_transaction(monkeypatch
         processing.delete_stat_holiday(event(path={"date": "2026-02-30"}), ADMIN)
     assert exc.value.status == 400
     assert str(exc.value) == "date must be a date (YYYY-MM-DD)"
+
+
+@pytest.mark.parametrize(
+    "method, resource",
+    [
+        ("GET", "/pa/pay-periods"),
+        ("PATCH", "/pa/payroll/{id}/release"),
+        ("GET", "/pa/positions"),
+        ("POST", "/pa/positions"),
+        ("PATCH", "/pa/positions/{id}"),
+        ("POST", "/pa/stat-holidays"),
+        ("DELETE", "/pa/stat-holidays/{date}"),
+    ],
+)
+def test_admin_routes_reject_non_admin_roles(monkeypatch, method, resource):
+    from payroll_common import auth
+
+    monkeypatch.setattr(auth, "authenticate", lambda event: {"employee_id": 17, "active_role": "EMPLOYEE"})
+    monkeypatch.setattr(processing, "get_conn", lambda: pytest.fail("database should not be reached"))
+
+    response = processing.lambda_handler({"httpMethod": method, "resource": resource}, None)
+
+    assert response["statusCode"] == 403
+    assert json.loads(response["body"]) == {
+        "error": "This page requires the PAYROLL_ADMIN role", "details": None
+    }
+
+
+def test_stat_holidays_route_allows_authenticated_employee_and_serializes_date(monkeypatch, db):
+    from payroll_common import auth
+
+    monkeypatch.setattr(auth, "authenticate", lambda event: {"employee_id": 17, "active_role": "EMPLOYEE"})
+    monkeypatch.setattr(processing, "query", Mock(return_value=[
+        {"holiday_date": datetime.date(2026, 7, 1), "name": "Canada Day"}
+    ]))
+
+    response = processing.lambda_handler({
+        "httpMethod": "GET", "resource": "/stat-holidays", "queryStringParameters": {"year": "2026"}
+    }, None)
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"]) == {
+        "year": 2026, "holidays": [{"date": "2026-07-01", "name": "Canada Day"}]
+    }
+
+
+def test_lambda_handler_propagates_release_errors_as_http_response(monkeypatch, db):
+    from payroll_common import auth
+
+    monkeypatch.setattr(auth, "authenticate", lambda event: ADMIN)
+    monkeypatch.setattr(
+        processing, "release_period",
+        Mock(side_effect=processing.HttpError(409, "Unapproved", {"unapprovedCount": 1})),
+    )
+    response = processing.lambda_handler({
+        "httpMethod": "PATCH", "resource": "/pa/payroll/{id}/release",
+        "pathParameters": {"id": "5"},
+    }, None)
+
+    assert response["statusCode"] == 409
+    assert json.loads(response["body"]) == {"error": "Unapproved", "details": {"unapprovedCount": 1}}
+
+
+def test_lambda_handler_rejects_unauthenticated_requests_before_database(monkeypatch):
+    from payroll_common import auth
+
+    monkeypatch.setattr(auth, "get_conn", lambda: pytest.fail("database should not be reached"))
+    response = processing.lambda_handler({"httpMethod": "GET", "resource": "/stat-holidays"}, None)
+    assert response["statusCode"] == 401
+    assert json.loads(response["body"]) == {"error": "Unauthenticated", "details": None}
+
+
+def test_lambda_handler_rejects_unknown_route():
+    response = processing.lambda_handler({"httpMethod": "GET", "resource": "/unknown"}, None)
+    assert response["statusCode"] == 404
+    assert json.loads(response["body"]) == {"error": "Route not found", "details": None}
