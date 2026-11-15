@@ -26,8 +26,8 @@ function timeAngles() {
 function Glove({ y }: { y: number }) {
   return (
     <g>
-      <circle cx="33.1" cy={y + 0.9} r="0.75" fill="#fff" stroke={INK} strokeWidth="0.55" />
-      <circle cx="32" cy={y - 0.4} r="1.5" fill="#fff" stroke={INK} strokeWidth="0.55" />
+      <circle cx="33.6" cy={y + 0.9} r="1.05" fill="#fff" stroke={INK} strokeWidth="0.6" />
+      <circle cx="32" cy={y - 0.8} r="2.1" fill="#fff" stroke={INK} strokeWidth="0.6" />
     </g>
   )
 }
