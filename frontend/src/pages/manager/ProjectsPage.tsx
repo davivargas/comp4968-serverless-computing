@@ -10,11 +10,12 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { managerApi } from '@/lib/manager/api'
-import { CURRENT_MANAGER } from '@/lib/manager/session'
+import { useSession } from '@/components/auth/session-context'
 import type { ManagerProject, ProjectEmployees } from '@/lib/manager/types'
 import { useManagerData } from '@/lib/manager/useManagerData'
 
 export default function ProjectsPage() {
+  const { me } = useSession()
   const { employees, projects, loading, error, reload, run, busy } = useManagerData()
   const [editing, setEditing] = useState<ManagerProject | 'new' | null>(null)
   const [name, setName] = useState(''), [code, setCode] = useState('')
@@ -51,7 +52,7 @@ export default function ProjectsPage() {
     <Dialog open={!!editing} onOpenChange={open => { if (!open && !busy) setEditing(null) }}><DialogContent><form onSubmit={e => { e.preventDefault(); void save() }}><DialogHeader><DialogTitle>{editing === 'new' ? 'Create project' : 'Rename project'}</DialogTitle><DialogDescription>Project codes are unique and cannot be reused.</DialogDescription></DialogHeader><div className="my-5 grid gap-4"><div className="grid gap-2"><Label htmlFor="project-name">Project name</Label><Input id="project-name" required value={name} onChange={e => setName(e.target.value)} /></div>{editing === 'new' && <div className="grid gap-2"><Label htmlFor="project-code">Project code (optional)</Label><Input id="project-code" type="number" min="1" step="1" placeholder="Automatically generated" value={code} onChange={e => setCode(e.target.value)} /></div>}</div><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button><Button disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Save project'}</Button></DialogFooter></form></DialogContent></Dialog>
     <Dialog open={!!selected} onOpenChange={open => { if (!open && !busy && !memberLoading) setSelected(null) }}><DialogContent><DialogHeader><DialogTitle>{selected?.name} assignments</DialogTitle><DialogDescription>Only active team members or yourself can be assigned to an active project.</DialogDescription></DialogHeader>
       {memberLoading ? <Skeleton className="h-24" /> : memberError ? <p role="alert">{memberError} <Button variant="outline" onClick={() => selected && void loadMembers(selected)}>Retry</Button></p> : <div className="grid gap-2">{members?.employees.map(e => <div key={e.employeeId} className="flex justify-between text-sm"><span>{e.firstName} {e.lastName}</span><Badge variant="outline">{e.status}</Badge></div>)}{!members?.employees.length && <p className="text-sm text-muted-foreground">No employees assigned.</p>}</div>}
-      <Label htmlFor="assign-employee">Assign employee</Label><select id="assign-employee" className="h-9 rounded-md border bg-background px-3 text-sm" value={employeeId} disabled={memberLoading || busy || selected?.status !== 'ACTIVE'} onChange={e => setEmployeeId(e.target.value)}><option value="">Choose employee</option>{[...employees.filter(e => e.status === 'ACTIVE'), { employeeId: CURRENT_MANAGER.id, firstName: CURRENT_MANAGER.firstName, lastName: 'Johnson' }].filter(e => !members?.employees.some(m => m.employeeId === e.employeeId)).map(e => <option key={e.employeeId} value={e.employeeId}>{e.firstName} {e.lastName}</option>)}</select>
+      <Label htmlFor="assign-employee">Assign employee</Label><select id="assign-employee" className="h-9 rounded-md border bg-background px-3 text-sm" value={employeeId} disabled={memberLoading || busy || selected?.status !== 'ACTIVE'} onChange={e => setEmployeeId(e.target.value)}><option value="">Choose employee</option>{[...employees.filter(e => e.status === 'ACTIVE'), ...(me && !employees.some(e => e.employeeId === me.employeeId) ? [me] : [])].filter(e => !members?.employees.some(m => m.employeeId === e.employeeId)).map(e => <option key={e.employeeId} value={e.employeeId}>{e.firstName} {e.lastName}</option>)}</select>
       {selected?.status === 'CLOSED' && <p className="text-sm text-muted-foreground">Reopen this project to add assignments.</p>}
       <DialogFooter><Button disabled={!employeeId || busy || memberLoading || selected?.status !== 'ACTIVE'} onClick={() => void assign()}>{busy ? 'Saving…' : 'Assign employee'}</Button></DialogFooter>
     </DialogContent></Dialog>

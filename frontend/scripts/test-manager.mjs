@@ -34,7 +34,7 @@ try {
   assert.equal((await api.assignEmployee(project.projectId, 'E1001')).alreadyAssigned, false)
   assert.equal((await api.assignEmployee(project.projectId, 'E1001')).alreadyAssigned, true)
   assert.equal((await api.projectEmployees(project.projectId)).employees.length, 1)
-  assert.equal((await api.listEmployees(project.projectId)).length, 1)
+  assert.equal((await api.listEmployees('E1002', project.projectId)).length, 1)
   await assert.rejects(api.updateProject(project.projectId, { isDeleted: true }), /in use/)
   await api.updateProject(project.projectId, { status: 'CLOSED' })
   await assert.rejects(api.assignEmployee(project.projectId, 'E1003'), /Closed projects/)

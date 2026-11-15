@@ -1,8 +1,10 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
+import { MONTHS } from './dates'
 import { mockApi } from './mock'
 import type {
   AggregatePay, EmployeeProfile, Granularity, ISODate, NewTimesheetEntry, PayPeriod, PayStub, PayStubSummary,
-  ProfileUpdate, Project, TimesheetEntry,
+  ProfileUpdate, Project, SickDays, StatHoliday, TimesheetEntry,
 } from './types'
 
 /**
@@ -22,6 +24,10 @@ export interface EmployeeApi {
   getPayStub(employeeId: string, payDate: ISODate): Promise<PayStub>
   getProfile(employeeId: string): Promise<EmployeeProfile>
   updateProfile(employeeId: string, update: ProfileUpdate): Promise<EmployeeProfile>
+  /** Sick days used and left in a calendar year (default: this year). */
+  getSickDays(employeeId: string, year?: number): Promise<SickDays>
+  /** Stat holidays in a calendar year (default: this year), for colouring the timesheet. */
+  getStatHolidays(year?: number): Promise<StatHoliday[]>
 }
 
 // Trailing slashes are trimmed so ".../prod/" and ".../prod" both work.
@@ -34,15 +40,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
     // authHeaders() adds the Cognito ID token that API Gateway checks before any Lambda runs.
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...(await authHeaders()), ...init?.headers },
   })
-  if (!res.ok) {
-    // The Lambdas reply with { message } (400, 403, 409, ...); show that rather than raw JSON.
-    const text = await res.text()
-    let message = text
-    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
-    throw new Error(message || `${res.status} ${res.statusText}`)
-  }
+  if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()
 }
 
@@ -53,20 +53,48 @@ const qs = (params: Record<string, string | number | undefined>) => {
   return s ? `?${s}` : ''
 }
 
+/**
+ * The backend labels periods "2026-03", "2026-Q1" and "YTD"; the dashboard's dropdowns and tables use
+ * "Mar", "Q1" and "2026". Convert here so the pages work the same with the real API and the mock.
+ */
+function displayLabel(label: string, granularity: Granularity, year: number) {
+  if (granularity === 'ytd') return String(year)
+  const quarter = /Q([1-4])$/.exec(label)
+  if (granularity === 'quarterly' && quarter) return `Q${quarter[1]}`
+  const month = /-(\d{2})$/.exec(label)
+  if (granularity === 'monthly' && month) return MONTHS[Number(month[1]) - 1] ?? label
+  return label
+}
+
+export const withDisplayLabels = (data: AggregatePay): AggregatePay => ({
+  ...data,
+  periods: data.periods.map((p) => ({ ...p, label: displayLabel(p.label, data.granularity, data.year) })),
+})
+
+/**
+ * The backend stores project codes as integers and sends them as JSON numbers, but the UI
+ * (Radix Select in particular) needs strings, so normalize at the boundary.
+ */
+const withStringCode = <T extends { projectCode: unknown }>(x: T): T => ({ ...x, projectCode: String(x.projectCode) })
+
 const httpApi: EmployeeApi = {
-  getProjects: (id, search) => request<{ projects: Project[] }>(`/employee/${id}/projects${qs({ search })}`).then((r) => r.projects),
+  getProjects: (id, search) =>
+    request<{ projects: Project[] }>(`/employee/${id}/projects${qs({ search })}`).then((r) => r.projects.map(withStringCode)),
   getPayPeriod: (id, date) => request(`/employee/${id}/pay-period${qs({ date })}`),
-  getTimesheets: (id, from, to) => request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets${qs({ from, to })}`).then((r) => r.entries),
+  getTimesheets: (id, from, to) => request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets${qs({ from, to })}`).then((r) => r.entries.map(withStringCode)),
   createTimesheets: (id, entries) =>
-    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets`, { method: 'POST', body: JSON.stringify({ entries }) }).then((r) => r.entries),
+    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets`, { method: 'POST', body: JSON.stringify({ entries }) }).then((r) => r.entries.map(withStringCode)),
   deleteTimesheet: (id, timesheetId) => request(`/employee/${id}/timesheets/${timesheetId}`, { method: 'DELETE' }),
   submitTimesheets: (id, from, to) =>
-    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets/submit`, { method: 'PATCH', body: JSON.stringify({ from, to }) }).then((r) => r.entries),
-  getAggregatePay: (id, year, granularity) => request(`/employee/${id}/aggregate-pay${qs({ year, granularity })}`),
+    request<{ entries: TimesheetEntry[] }>(`/employee/${id}/timesheets/submit`, { method: 'PATCH', body: JSON.stringify({ from, to }) }).then((r) => r.entries.map(withStringCode)),
+  getAggregatePay: (id, year, granularity) =>
+    request<AggregatePay>(`/employee/${id}/aggregate-pay${qs({ year, granularity })}`).then(withDisplayLabels),
   getPayStubs: (id, from, to) => request<{ payStubs: PayStubSummary[] }>(`/employee/${id}/pay-stubs${qs({ from, to })}`).then((r) => r.payStubs),
   getPayStub: (id, payDate) => request(`/employee/${id}/pay-stubs/${payDate}`),
   getProfile: (id) => request(`/employee/${id}/profile`),
   updateProfile: (id, update) => request(`/employee/${id}/profile`, { method: 'PATCH', body: JSON.stringify(update) }),
+  getSickDays: (id, year) => request(`/employee/${id}/sick-days${qs({ year })}`),
+  getStatHolidays: (year) => request<{ holidays: StatHoliday[] }>(`/stat-holidays${qs({ year })}`).then((r) => r.holidays),
 }
 
 export const employeeApi: EmployeeApi = BASE_URL ? httpApi : mockApi

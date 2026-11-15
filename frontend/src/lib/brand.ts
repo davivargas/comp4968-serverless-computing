@@ -1,2 +1,2 @@
-/** Product name, used in headers, the browser tab and generated PDFs. */
+/** Product name, used in the app's headers and the browser tab. Pay stubs stay unbranded: they're the employer's document. */
 export const APP_NAME = 'Timely'

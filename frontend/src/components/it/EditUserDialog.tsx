@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { fullName, type Position, type Team, type UpdateUserInput, type User } from '@/lib/it/types'
 import {
-  AddressFields, Field, NO_TEAM, PositionSelect, TeamSelect, addressComplete, addressFilled, emptyAddress, phoneValid,
+  AddressFields, Field, NO_TEAM, PositionSelect, TeamSelect, addressComplete, addressFilled, emptyAddress, normalizeAddress, normalizePhone, phoneValid,
 } from './UserFormFields'
 
 export function EditUserDialog({
@@ -48,11 +48,11 @@ function Form({ user, positions, teams, onClose, onSave, onResetPassword }: {
   if (firstName.trim() !== user.firstName) changes.firstName = firstName.trim()
   if (lastName.trim() !== user.lastName) changes.lastName = lastName.trim()
   if (email.trim() !== user.email) changes.email = email.trim()
-  if (phone !== (user.phone ?? '')) changes.phone = phone || null
+  if ((phone && normalizePhone(phone)) !== (user.phone ?? '')) changes.phone = phone ? normalizePhone(phone) : null
   if (Number(positionId) !== user.positionId) changes.positionId = Number(positionId)
   const newTeam = teamId === NO_TEAM ? null : Number(teamId)
   if (newTeam !== user.teamId) changes.teamId = newTeam
-  if (JSON.stringify(address) !== JSON.stringify(user.address ?? emptyAddress) && addressFilled({ ...address, country: '' })) changes.address = address
+  if (JSON.stringify(address) !== JSON.stringify(user.address ?? emptyAddress) && addressFilled({ ...address, country: '' })) changes.address = normalizeAddress(address)
 
   const valid = Object.keys(changes).length > 0 && firstName.trim() && lastName.trim() && /^\S+@\S+\.\S+$/.test(email) && phoneOk && addressOk
 
@@ -80,7 +80,7 @@ function Form({ user, positions, teams, onClose, onSave, onResetPassword }: {
       <Field id="e-email" label="Email" hint="Changing this also changes their sign-in email.">
         <Input id="e-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       </Field>
-      <Field id="e-phone" label="Phone" hint={phoneOk ? 'Format: +16045550142. Clear to remove.' : 'Use +1 followed by 10 digits'}>
+      <Field id="e-phone" label="Phone" hint={phoneOk ? 'Clear to remove.' : 'Enter a 10-digit Canadian or US number'}>
         <Input id="e-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
       </Field>
       <Field label="Position"><PositionSelect positions={positions} value={positionId} onChange={setPositionId} /></Field>

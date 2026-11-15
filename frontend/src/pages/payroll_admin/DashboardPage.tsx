@@ -14,7 +14,7 @@ const range = (p: PayPeriod) => `${new Date(`${p.start}T12:00:00`).toLocaleDateS
 export default function DashboardPage() {
   const [employees, setEmployees] = useState<PayrollEmployee[]>([])
   const [periods, setPeriods] = useState<PayPeriod[]>([])
-  useEffect(() => { Promise.all([payrollAdminApi.listEmployees(), payrollAdminApi.listPayPeriods()]).then(([e, p]) => { setEmployees(e); setPeriods(p) }) }, [])
+  useEffect(() => { Promise.all([payrollAdminApi.listEmployees(), payrollAdminApi.listPayPeriods()]).then(([e, p]) => { setEmployees(e.employees); setPeriods(p) }) }, [])
   const current = periods[0]
   const approved = current ? current.employeeCount - current.unapprovedCount : 0
   const percent = current ? Math.round((approved / current.employeeCount) * 100) : 0

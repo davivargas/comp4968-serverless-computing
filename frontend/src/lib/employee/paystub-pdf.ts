@@ -1,9 +1,8 @@
 // Loaded on demand (see PayStubsPage) so jsPDF stays out of the main bundle.
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { APP_NAME } from '@/lib/brand'
 import { formatDate, formatMoney } from './dates'
-import { DEDUCTION_LABELS, totalDeductions } from './pay'
+import { breakdownRows, DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from './pay'
 import type { Deductions, PayStub } from './types'
 
 export function downloadPayStubPdf(stub: PayStub) {
@@ -12,16 +11,15 @@ export function downloadPayStubPdf(stub: PayStub) {
   const right = doc.internal.pageSize.getWidth() - 48
 
   doc.setFont('helvetica', 'bold').setFontSize(18).text('Pay Statement', x, 60)
-  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(100)
-  doc.text(APP_NAME, right, 60, { align: 'right' })
 
-  doc.setTextColor(0).setFontSize(10)
+  doc.setFont('helvetica', 'normal').setTextColor(0).setFontSize(10)
   const meta: [string, string][] = [
     ['Employee', `${stub.employeeName} (${stub.employeeId})`],
     ['Position', stub.position],
     ['Pay date', formatDate(stub.payDate)],
     ['Pay period', `${formatDate(stub.periodStart)} – ${formatDate(stub.periodEnd)}`],
-    ['Deposited to', stub.depositAccount],
+    // jsPDF throws on a null string. With no direct deposit on file, the employee is paid by cheque.
+    stub.depositAccount ? ['Deposited to', stub.depositAccount] : ['Paid by', 'Cheque'],
   ]
   meta.forEach(([k, v], i) => {
     doc.setFont('helvetica', 'bold').text(k, x, 92 + i * 15)
@@ -32,10 +30,17 @@ export function downloadPayStubPdf(stub: PayStub) {
   doc.setFontSize(20).text(formatMoney(stub.net), right, 116, { align: 'right' })
 
   const head = { fillColor: [8, 145, 178] as [number, number, number], textColor: 255 }
+  // columnStyles only reaches body rows, so line up the headers and totals with the numbers.
+  const alignFoot = ({ section, column, cell }: { section: string; column: { index: number }; cell: { styles: { halign: string } } }) => {
+    if (section !== 'body' && column.index > 0) cell.styles.halign = 'right'
+  }
   autoTable(doc, {
     startY: 180,
     head: [['Earnings', 'Hours', 'Rate', 'Current']],
-    body: stub.earnings.map((e) => [e.projectCode, e.hours.toFixed(2), formatMoney(e.rate), formatMoney(e.amount)]),
+    body: stub.earnings.map((e) => {
+      const pct = vacationPercent(e, stub.earnings)
+      return [earningLabel(e), pct ? '—' : e.hours.toFixed(2), pct ?? formatMoney(e.rate), formatMoney(e.amount)]
+    }),
     foot: [
       ['Gross pay', stub.hours.toFixed(2), '', formatMoney(stub.gross)],
       ['Year to date', stub.ytd.hours.toFixed(2), '', formatMoney(stub.ytd.gross)],
@@ -43,12 +48,27 @@ export function downloadPayStubPdf(stub: PayStub) {
     headStyles: head,
     footStyles: { fillColor: [245, 245, 245], textColor: 0 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    didParseCell: alignFoot,
     margin: { left: x, right: 48 },
   })
 
+  const lastY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY
+  const breakdown = breakdownRows(stub.hoursBreakdown)
+  if (breakdown.length) {
+    autoTable(doc, {
+      startY: lastY() + 20,
+      head: [['Hours by type', 'Hours', 'Pay']],
+      body: breakdown.map((r) => [r.label, r.hours.toFixed(2), r.pay === null ? '—' : formatMoney(r.pay)]),
+      headStyles: head,
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      didParseCell: alignFoot,
+      margin: { left: x, right: 48 },
+    })
+  }
+
   const keys = Object.keys(DEDUCTION_LABELS) as (keyof Deductions)[]
   autoTable(doc, {
-    startY: (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 20,
+    startY: lastY() + 20,
     head: [['Deductions', 'Current', 'Year to date']],
     body: keys.map((k) => [DEDUCTION_LABELS[k], formatMoney(stub.deductions[k]), formatMoney(stub.ytd.deductions[k])]),
     foot: [
@@ -58,6 +78,7 @@ export function downloadPayStubPdf(stub: PayStub) {
     headStyles: head,
     footStyles: { fillColor: [245, 245, 245], textColor: 0 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+    didParseCell: alignFoot,
     margin: { left: x, right: 48 },
   })
 

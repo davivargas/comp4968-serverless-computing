@@ -1,5 +1,5 @@
 """Payroll release (pay-period level) and position / wage administration (Payroll Admin)."""
-from collections import defaultdict
+import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from payroll_common import payroll as payroll
@@ -7,7 +7,8 @@ from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, created, no_content, parse_body, router, qs
-from payroll_common.validate import bad, path_id, require_bool_true, require_date, require_str
+from payroll_common.release import release_period
+from payroll_common.validate import bad, opt_int, paging, path_id, require_bool_true, require_date, require_str
 
 
 PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
@@ -17,7 +18,7 @@ PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
 def list_periods(event, request_context):
     """GET /pa/pay-periods?limit=&offset=  - canRelease drives the Release button."""
     today = payroll.today_bc()
-    limit, offset = payroll.paging(qs(event), 26, 100)
+    limit, offset = paging(qs(event), 26, 100)
     with transaction() as connection:
         payroll.ensure_periods(connection, today)
     pay_period_rows = query(get_conn(), """
@@ -41,386 +42,12 @@ def list_periods(event, request_context):
         "releasedAt": pay_period_row["released_at"]} for pay_period_row in pay_period_rows]}
     
     
-def validate_pay_period(connection, pay_period_id):
-    """Validate that a pay period exists and is eligible for release."""
-
-    pay_period = one(
-        connection,
-        "SELECT * FROM pay_period WHERE pay_period_id = %s FOR UPDATE",
-        (pay_period_id,)
-    )
-
-    if not pay_period:
-        raise HttpError(404, "Pay period not found")
-
-    if pay_period["status"] == "RELEASED":
-        raise HttpError(409, "This pay period has already been released")
-
-    if payroll.today_bc() <= pay_period["end_date"]:
-        raise HttpError(409, "This pay period has not ended yet")
-
-    return pay_period
-
-
-def validate_timesheets(connection, pay_period):
-    """Ensure all timesheet entries in the pay period are approved."""
-
-    unapproved_count = one(
-        connection,
-        """
-        SELECT COUNT(*)::int AS unapproved_count
-        FROM timesheet_entry
-        WHERE NOT is_deleted
-          AND work_date BETWEEN %s AND %s
-          AND NOT approved
-        """,
-        (pay_period["start_date"], pay_period["end_date"])
-    )["unapproved_count"]
-
-    if unapproved_count:
-        entry_word = "entry is" if unapproved_count == 1 else "entries are"
-
-        raise HttpError(
-            409,
-            f"{unapproved_count} timesheet {entry_word} not approved yet",
-            {"unapprovedCount": unapproved_count}
-        )
-        
-
-def load_payroll_employees(connection, pay_period):
-    employees = query(
-        connection,
-        """
-        SELECT employee.employee_id,
-               employee.first_name || ' ' || employee.last_name AS employee_name,
-               employee.hire_date,
-               employee.position_id,
-               position.title,
-               direct_deposit.account_last4
-        FROM employee
-        JOIN position ON position.position_id = employee.position_id
-        LEFT JOIN direct_deposit ON direct_deposit.employee_id = employee.employee_id
-        WHERE employee.employee_id IN (
-            SELECT employee_id
-            FROM timesheet_entry
-            WHERE NOT is_deleted
-              AND work_date BETWEEN %s AND %s
-        )
-        ORDER BY employee.employee_id
-        """,
-        (pay_period["start_date"], pay_period["end_date"])
-    )
-
-    if not employees:
-        raise HttpError(
-            409,
-            "No timesheet entries in this pay period; nothing to release"
-        )
-
-    return employees
-
-
-def load_and_validate_wages(connection, employees):
-    wages_by_position_id = payroll.load_wages(
-        connection,
-        {employee["position_id"] for employee in employees}
-    )
-
-    for employee in employees:
-        if not wages_by_position_id[employee["position_id"]]:
-            raise HttpError(
-                409,
-                f'The position "{employee["title"]}" has no wage set; add one before releasing'
-            )
-
-    return wages_by_position_id
-
-def load_employee_earnings(connection, pay_period):
-    """Load and return daily work entries grouped by employee ID for the given pay period."""
-    daily_work_entries = query(
-        connection,
-        """
-        SELECT timesheet_entry.employee_id,
-               timesheet_entry.work_date,
-               project.project_id,
-               project.project_code,
-               (SUM(EXTRACT(EPOCH FROM (
-                   timesheet_entry.end_time - timesheet_entry.start_time
-               ))) / 60)::int AS minutes
-        FROM timesheet_entry
-        JOIN project
-            ON project.project_id = timesheet_entry.project_id
-        WHERE NOT timesheet_entry.is_deleted
-          AND timesheet_entry.work_date BETWEEN %s AND %s
-        GROUP BY timesheet_entry.employee_id,
-                 timesheet_entry.work_date,
-                 project.project_id,
-                 project.project_code
-        """,
-        (pay_period["start_date"], pay_period["end_date"])
-    )
-
-    daily_entries_by_employee_id = defaultdict(list)
-
-    for daily_entry in daily_work_entries:
-        daily_entries_by_employee_id[
-            daily_entry["employee_id"]
-        ].append(daily_entry)
-
-    return daily_entries_by_employee_id
-
-def load_ytd_totals(connection, pay_period):
-    """Load and return year-to-date totals for each employee up to the start of the given pay period."""
-    payroll_year = pay_period["pay_date"].year
-
-    year_to_date_rows = query(
-        connection,
-        """
-        SELECT paystub.employee_id,
-               SUM(regular_hours + overtime_hours + double_overtime_hours) AS total_hours,
-               SUM(gross_pay) AS gross_pay,
-               SUM(cpp) AS cpp,
-               SUM(ei) AS ei,
-               SUM(federal_tax) AS federal_tax,
-               SUM(provincial_tax) AS provincial_tax,
-               SUM(net_pay) AS net_pay
-        FROM paystub
-        JOIN pay_period
-            ON pay_period.pay_period_id = paystub.pay_period_id
-        WHERE pay_period.start_date < %s
-          AND EXTRACT(YEAR FROM pay_period.pay_date) = %s
-        GROUP BY paystub.employee_id
-        """,
-        (pay_period["start_date"], payroll_year)
-    )
-
-    return {
-        row["employee_id"]: row
-        for row in year_to_date_rows
-    }
-    
-    
-def create_employee_paystub(
-    connection,
-    request_context,
-    pay_period,
-    employee,
-    wages_by_position_id,
-    daily_entries_by_employee_id,
-    year_to_date_by_employee_id,
-    payroll_rates
-):
-    """Create a paystub for the given employee and pay period."""
-    employee_id = employee["employee_id"]
-
-    employee_year_to_date = year_to_date_by_employee_id.get(
-        employee_id, {}
-    )
-
-    year_to_date_totals = {
-        "hours": employee_year_to_date.get("total_hours") or 0,
-        "gross": employee_year_to_date.get("gross_pay") or 0,
-        "cpp": employee_year_to_date.get("cpp") or 0,
-        "ei": employee_year_to_date.get("ei") or 0,
-        "federal": employee_year_to_date.get("federal_tax") or 0,
-        "provincial": employee_year_to_date.get("provincial_tax") or 0,
-        "net": employee_year_to_date.get("net_pay") or 0,
-    }
-
-    earning_entries = [
-        {
-            "date": daily_entry["work_date"],
-            "project_id": daily_entry["project_id"],
-            "project_code": daily_entry["project_code"],
-            "minutes": daily_entry["minutes"],
-            "rate": payroll.wage_for(
-                wages_by_position_id[employee["position_id"]],
-                daily_entry["work_date"]
-            )
-        }
-        for daily_entry in daily_entries_by_employee_id[employee_id]
-    ]
-
-    paystub_calculation = payroll.calculate_paystub(
-        earning_entries,
-        pay_period["start_date"],
-        payroll.vacation_rate_for(
-            employee["hire_date"],
-            pay_period["end_date"]
-        ),
-        year_to_date_totals,
-        payroll_rates
-    )
-
-    earning_lines = paystub_calculation.pop("earnings")
-
-    paystub_row = {
-        "employee_id": employee_id,
-        "pay_period_id": pay_period["pay_period_id"],
-        "employee_name": employee["employee_name"],
-        "position_title": employee["title"],
-        "deposit_account_last4": employee["account_last4"],
-        **paystub_calculation
-    }
-
-    column_names = list(paystub_row)
-
-    inserted_paystub = one(
-        connection,
-        f"""
-        INSERT INTO paystub ({', '.join(column_names)})
-        VALUES ({', '.join(['%s'] * len(column_names))})
-        RETURNING paystub_id
-        """,
-        [paystub_row[column_name] for column_name in column_names]
-    )
-
-    for earning_line in earning_lines:
-        query(
-            connection,
-            """
-            INSERT INTO paystub_earning
-                (paystub_id, line_type, project_id,
-                 project_code, hours, rate, amount)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                inserted_paystub["paystub_id"],
-                earning_line["line_type"],
-                earning_line["project_id"],
-                earning_line["project_code"],
-                earning_line["hours"],
-                earning_line["rate"],
-                earning_line["amount"]
-            )
-        )
-
-    audit(
-        connection,
-        request_context,
-        "paystub",
-        inserted_paystub["paystub_id"],
-        "INSERT",
-        None,
-        paystub_row
-    )
-
-    return {
-        "paystubId": inserted_paystub["paystub_id"],
-        "employeeId": employee_id,
-        "gross": paystub_calculation["gross_pay"],
-        "net": paystub_calculation["net_pay"]
-    }
-    
-def finalize_payroll_release(
-    connection,
-    pay_period_id,
-    request_context
-):
-    """Finalize the release of the payroll for the given pay period."""
-    query(
-        connection,
-        """
-        UPDATE pay_period
-        SET status = 'RELEASED',
-            released_by = %s,
-            released_at = now()
-        WHERE pay_period_id = %s
-        """,
-        (request_context["employee_id"], pay_period_id)
-    )
-
-    audit(
-        connection,
-        request_context,
-        "pay_period",
-        pay_period_id,
-        "UPDATE",
-        {"status": "OPEN"},
-        {
-            "status": "RELEASED",
-            "released_by": request_context["employee_id"]
-        }
-    )
-    
-    
-def generate_paystubs(
-    connection,
-    request_context,
-    pay_period,
-    employees,
-    wages_by_position_id,
-    daily_entries_by_employee_id,
-    year_to_date_by_employee_id
-):
-    """Generate paystubs for all employees for the given pay period."""
-    payroll_year = pay_period["pay_date"].year
-    payroll_rates = payroll.rates_for(payroll_year)
-
-    created_paystubs = []
-
-    for employee in employees:
-        paystub = create_employee_paystub(
-            connection,
-            request_context,
-            pay_period,
-            employee,
-            wages_by_position_id,
-            daily_entries_by_employee_id,
-            year_to_date_by_employee_id,
-            payroll_rates
-        )
-
-        created_paystubs.append(paystub)
-
-    return created_paystubs
-
 def release(event, request_context):
     """PATCH /pa/payroll/{id}/release"""
-
     pay_period_id = path_id(event)
 
     with transaction() as connection:
-        pay_period = validate_pay_period(
-            connection, pay_period_id
-        )
-
-        validate_timesheets(connection, pay_period)
-
-        employees, wages_by_position_id = load_payroll_employees(
-            connection, pay_period
-        )
-
-        daily_entries_by_employee_id = load_employee_earnings(
-            connection, pay_period
-        )
-
-        year_to_date_by_employee_id = load_ytd_totals(
-            connection, pay_period
-        )
-
-        created_paystubs = generate_paystubs(
-            connection,
-            request_context,
-            pay_period,
-            employees,
-            wages_by_position_id,
-            daily_entries_by_employee_id,
-            year_to_date_by_employee_id
-        )
-
-        finalize_payroll_release(
-            connection,
-            pay_period_id,
-            request_context
-        )
-
-    return {
-        "payPeriodId": pay_period_id,
-        "status": "RELEASED",
-        "paystubsCreated": len(created_paystubs),
-        "paystubs": created_paystubs
-    }
+        return release_period(connection, pay_period_id, request_context)
         
 # ---- positions and wages (Payroll Admin) --------------------------------------------------------------------
 
@@ -539,11 +166,120 @@ def update_position(event, request_context):
             audit(connection, request_context, "position", position_id, "DELETE", {"is_deleted": False}, {"is_deleted": True})
             return no_content()
         return position_json(connection, position_id)
+    
+    
+# ---- stat holidays ------------------------------------------------------------------------------------------
+
+def list_stat_holidays(event, request_context):
+    """GET /stat-holidays?year=  - any signed-in role, so the timesheet can colour the dates."""
+    year = opt_int(qs(event).get("year"), "year") or payroll.today_bc().year
+    if year < 2000 or year > 2100:
+        bad("year must be between 2000 and 2100")
+    holiday_rows = query(
+        get_conn(),
+        """
+        SELECT holiday_date, name
+        FROM stat_holiday
+        WHERE holiday_date BETWEEN %s AND %s
+        ORDER BY holiday_date
+        """,
+        (datetime.date(year, 1, 1), datetime.date(year, 12, 31))
+    )
+    return {
+        "year": year,
+        "holidays": [
+            {"date": holiday_row["holiday_date"], "name": holiday_row["name"]}
+            for holiday_row in holiday_rows
+        ]
+    }
+    
+    
+def assert_date_not_released(connection, holiday_date):
+    """A stat holiday inside a released pay period can no longer be added or removed."""
+    released_period = one(
+        connection,
+        """
+        SELECT 1 AS period_exists
+        FROM pay_period
+        WHERE %s::date BETWEEN start_date AND end_date
+          AND status = 'RELEASED'
+        """,
+        (holiday_date,)
+    )
+
+    if released_period:
+        raise HttpError(409, "That date is inside a pay period that has already been released")
+    
+    
+def add_stat_holiday(event, request_context):
+    """POST /pa/stat-holidays  body {date, name}"""
+    request_body = parse_body(event)
+    holiday_date = require_date(request_body.get("date"), "date")
+    name = require_str(request_body.get("name"), "name", 100)
+
+    with transaction() as connection:
+        assert_date_not_released(connection, holiday_date)
+
+        if one(connection, "SELECT 1 AS holiday_exists FROM stat_holiday WHERE holiday_date = %s", (holiday_date,)):
+            raise HttpError(409, "That date is already a stat holiday")
+
+        query(
+            connection,
+            "INSERT INTO stat_holiday (holiday_date, name, created_by) VALUES (%s, %s, %s)",
+            (holiday_date, name, request_context["employee_id"])
+        )
+
+        audit(
+            connection,
+            request_context,
+            "stat_holiday",
+            holiday_date.isoformat(),
+            "INSERT",
+            None,
+            {"holiday_date": holiday_date, "name": name, "created_by": request_context["employee_id"]}
+        )
+
+    return created({"date": holiday_date, "name": name})
+
+
+def delete_stat_holiday(event, request_context):
+    """DELETE /pa/stat-holidays/{date}"""
+    holiday_date = require_date((event.get("pathParameters") or {}).get("date"), "date")
+
+    with transaction() as connection:
+        old_holiday = one(
+            connection,
+            "SELECT holiday_date, name FROM stat_holiday WHERE holiday_date = %s FOR UPDATE",
+            (holiday_date,)
+        )
+
+        if not old_holiday:
+            raise HttpError(404, "That date is not a stat holiday")
+
+        assert_date_not_released(connection, holiday_date)
+
+        query(connection, "DELETE FROM stat_holiday WHERE holiday_date = %s", (holiday_date,))
+
+        audit(
+            connection,
+            request_context,
+            "stat_holiday",
+            holiday_date.isoformat(),
+            "DELETE",
+            {"holiday_date": old_holiday["holiday_date"], "name": old_holiday["name"]},
+            None
+        )
+
+    return no_content()
 
 
 lambda_handler = router({
     "GET /pa/pay-periods": with_auth(PAYROLL_ADMIN_ROLES, list_periods),
+    "PATCH /pa/payroll/{id}/release": with_auth(PAYROLL_ADMIN_ROLES, release),
     "GET /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, list_positions),
     "POST /pa/positions": with_auth(PAYROLL_ADMIN_ROLES, create_position),
     "PATCH /pa/positions/{id}": with_auth(PAYROLL_ADMIN_ROLES, update_position),
+    "GET /stat-holidays": with_auth([], list_stat_holidays),
+    "POST /pa/stat-holidays": with_auth(PAYROLL_ADMIN_ROLES, add_stat_holiday),
+    "DELETE /pa/stat-holidays/{date}": with_auth(PAYROLL_ADMIN_ROLES, delete_stat_holiday),
 })

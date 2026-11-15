@@ -166,7 +166,7 @@ export default function ProfilePage() {
       <SectionCard
         icon={<Landmark />}
         title="Direct deposit"
-        description={savedDeposit ? `Pay is currently deposited to account ${savedDeposit.accountNumber}.` : 'No direct deposit account on file yet. Add one to get paid by deposit.'}
+        description={savedDeposit ? `Pay is currently deposited to account ${savedDeposit.accountNumber}.` : 'No direct deposit account on file, so you are paid by cheque. Add one to get paid by deposit.'}
         onSave={() =>
           save('deposit', {
             directDeposit: {

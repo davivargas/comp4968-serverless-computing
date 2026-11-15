@@ -1,24 +1,68 @@
 export interface PayrollEmployee {
   id: string
+  employeeId: string
+  firstName: string
+  lastName: string
   name: string
-  email: string
+  email: string | null
   position: string
   positionId: string
+  teamId: string | null
   team: string
-  project: string
+  projectId: string | null
+  project: string | null
   managerName: string | null
   status: 'active' | 'inactive'
-  startDate: string
-  hourlyRate: number
+  hours: number
+  gross: number
+  deductions: number
+  net: number
+  hourlyRate?: number
+  startDate?: string
 }
 
 export interface EmployeeRecord extends PayrollEmployee {
-  phone: string
-  address: string
+  email: string
+  phone: string | null
+  address: string | null
+  hireDate: string
+  startDate: string
+  hourlyRate: number
   payGrade: string
   totalHours: number
   ytdGross: number
   lastPayPeriod: string
+  depositAccountLast4: string | null
+  aggregate: PayAggregate
+  payStubs: PayStub[]
+}
+
+export interface PayAggregate {
+  hours: number
+  gross: number
+  deductions: number
+  net: number
+}
+
+export interface PayStub extends PayAggregate {
+  payDate: string
+  periodStart: string
+  periodEnd: string
+}
+
+export interface EmployeeListResult {
+  total: number
+  aggregationPeriod: string
+  limit: number
+  offset: number
+  employees: PayrollEmployee[]
+}
+
+export interface EmployeeDetailResult {
+  employee: EmployeeRecord
+  aggregationPeriod: string
+  aggregate: PayAggregate
+  payStubs: PayStub[]
 }
 
 export interface Position {
@@ -43,13 +87,26 @@ export interface PayPeriod {
 }
 
 export interface EmployeeFilters {
-  position?: string
-  team?: string
-  project?: string
-  status?: 'active' | 'inactive'
-  from?: string
-  to?: string
+  status?: 'ACTIVE' | 'DEACTIVATED'
+  positionId?: string
+  teamId?: string
+  projectId?: string
+  payDate?: string
+  fromPayDate?: string
+  toPayDate?: string
+  year?: number
   search?: string
+  sort?: 'id' | 'name' | 'position' | 'team' | 'gross' | 'hours'
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export interface PayrollReleaseResult {
+  payPeriodId: string
+  status: 'RELEASED'
+  paystubsCreated: number
+  paystubs: Array<{ paystubId: string; employeeId: string; gross: number; net: number }>
 }
 
 export interface CreatePositionInput {
