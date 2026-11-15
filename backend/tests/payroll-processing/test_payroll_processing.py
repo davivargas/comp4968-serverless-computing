@@ -141,3 +141,253 @@ def test_release_rejects_invalid_id_before_transaction(monkeypatch):
     with pytest.raises(processing.HttpError) as exc:
         processing.release(event(path={"id": "abc"}), ADMIN)
     assert exc.value.status == 400
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(0, "0.00"), (10000, "10000.00"), ("25.5", "25.50"), ("12.340", "12.34")],
+)
+def test_money_accepts_valid_rates(value, expected):
+    assert processing.money(value, "hourlyRate") == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    "value, message",
+    [
+        (True, "hourlyRate must be a number"),
+        (None, "hourlyRate must be a number"),
+        ([], "hourlyRate must be a number"),
+        ("abc", "hourlyRate must be a number"),
+        ("NaN", "hourlyRate must be between 0 and 10000"),
+        ("Infinity", "hourlyRate must be between 0 and 10000"),
+        ("-0.01", "hourlyRate must be between 0 and 10000"),
+        ("10000.01", "hourlyRate must be between 0 and 10000"),
+        ("1.001", "hourlyRate can have at most 2 decimal places"),
+    ],
+)
+def test_money_rejects_invalid_rates(value, message):
+    with pytest.raises(processing.HttpError) as exc:
+        processing.money(value, "hourlyRate")
+    assert exc.value.status == 400
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize(
+    "wages, expected_current, expected_next",
+    [
+        ([], None, None),
+        (
+            [{"hourly_wage": Decimal("30"), "effective_from": TODAY}],
+            {"hourlyRate": Decimal("30"), "effectiveFrom": TODAY},
+            None,
+        ),
+        (
+            [
+                {"hourly_wage": Decimal("20"), "effective_from": datetime.date(2025, 1, 1)},
+                {"hourly_wage": Decimal("30"), "effective_from": TODAY},
+                {"hourly_wage": Decimal("40"), "effective_from": datetime.date(2026, 12, 1)},
+                {"hourly_wage": Decimal("50"), "effective_from": datetime.date(2027, 1, 1)},
+            ],
+            {"hourlyRate": Decimal("30"), "effectiveFrom": TODAY},
+            {"hourlyRate": Decimal("40"), "effectiveFrom": datetime.date(2026, 12, 1)},
+        ),
+        (
+            [{"hourly_wage": Decimal("40"), "effective_from": datetime.date(2026, 12, 1)}],
+            None,
+            {"hourlyRate": Decimal("40"), "effectiveFrom": datetime.date(2026, 12, 1)},
+        ),
+    ],
+)
+def test_position_json_selects_current_and_next_wages(monkeypatch, db, wages, expected_current, expected_next):
+    monkeypatch.setattr(processing.payroll, "today_bc", lambda: TODAY)
+    one = Mock(return_value={"position_id": 5, "title": "Analyst", "pay_grade": "P2"})
+    query = Mock(return_value=wages)
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+
+    assert processing.position_json(db, 5) == {
+        "positionId": 5, "title": "Analyst", "payGrade": "P2",
+        "hourlyRate": expected_current["hourlyRate"] if expected_current else None,
+        "effectiveFrom": expected_current["effectiveFrom"] if expected_current else None,
+        "nextWage": expected_next,
+    }
+    assert one.call_args.args[2] == (5,)
+    assert query.call_args.args[2] == (5,)
+    assert "ORDER BY effective_from" in query.call_args.args[1]
+
+
+def test_list_positions_returns_non_deleted_positions_in_database_order(monkeypatch, db):
+    query = Mock(return_value=[{"position_id": 1}, {"position_id": 2}])
+    position_json = Mock(side_effect=[{"positionId": 1}, {"positionId": 2}])
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "position_json", position_json)
+
+    assert processing.list_positions(event(), ADMIN) == {"positions": [{"positionId": 1}, {"positionId": 2}]}
+    assert "NOT is_deleted ORDER BY title" in query.call_args.args[1]
+    assert position_json.call_args_list[0].args == (db, 1)
+    assert position_json.call_args_list[1].args == (db, 2)
+
+
+def test_create_position_inserts_wage_and_audits_both_records(monkeypatch, db):
+    one = Mock(side_effect=[None, {"position_id": 5}])
+    query = Mock()
+    audit = Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+    monkeypatch.setattr(processing, "position_json", Mock(return_value={"positionId": 5}))
+
+    response = processing.create_position(event(body={
+        "title": " Analyst ", "payGrade": " P2 ", "hourlyRate": "42.50",
+        "effectiveFrom": "2026-01-01",
+    }), ADMIN)
+
+    assert response["statusCode"] == 201
+    assert json.loads(response["body"]) == {"positionId": 5}
+    assert one.call_args_list[0].args[2] == ("Analyst", 0)
+    assert one.call_args_list[1].args[2] == ("Analyst", "P2")
+    assert query.call_args.args[2] == (5, Decimal("42.50"), datetime.date(2026, 1, 1), 17)
+    assert audit.call_args_list[0].args == (
+        db, ADMIN, "position", 5, "INSERT", None, {"title": "Analyst", "pay_grade": "P2"}
+    )
+    assert audit.call_args_list[1].args == (
+        db, ADMIN, "position_wage", "5:2026-01-01", "INSERT", None,
+        {"position_id": 5, "hourly_wage": Decimal("42.50"), "effective_from": datetime.date(2026, 1, 1)},
+    )
+
+
+def test_create_position_rejects_duplicate_title_without_writes(monkeypatch, db):
+    monkeypatch.setattr(processing, "one", Mock(return_value={"position_exists": 1}))
+    query = Mock()
+    monkeypatch.setattr(processing, "query", query)
+
+    with pytest.raises(processing.HttpError) as exc:
+        processing.create_position(event(body={
+            "title": "Analyst", "payGrade": "P2", "hourlyRate": "42.50", "effectiveFrom": "2026-01-01",
+        }), ADMIN)
+
+    assert exc.value.status == 409
+    query.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({}, "title is required"),
+        ({"title": "Analyst"}, "payGrade is required"),
+        ({"title": "Analyst", "payGrade": "P2", "hourlyRate": "10", "effectiveFrom": "2026-02-30"},
+         "effectiveFrom must be a date (YYYY-MM-DD)"),
+    ],
+)
+def test_create_position_rejects_invalid_input_before_transaction(monkeypatch, body, message):
+    monkeypatch.setattr(processing, "transaction", lambda: pytest.fail("transaction should not start"))
+    with pytest.raises(processing.HttpError) as exc:
+        processing.create_position(event(body=body), ADMIN)
+    assert exc.value.status == 400
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({}, "No updatable fields supplied"),
+        ({"hourlyRate": "20"}, "A wage change needs hourlyRate and effectiveFrom together"),
+        ({"effectiveFrom": "2026-01-01"}, "A wage change needs hourlyRate and effectiveFrom together"),
+        ({"isDeleted": False}, "isDeleted only accepts true"),
+        ({"title": " "}, "title is required"),
+        ({"payGrade": ""}, "payGrade is required"),
+    ],
+)
+def test_update_position_rejects_invalid_input_before_transaction(monkeypatch, body, message):
+    monkeypatch.setattr(processing, "transaction", lambda: pytest.fail("transaction should not start"))
+    with pytest.raises(processing.HttpError) as exc:
+        processing.update_position(event(body=body, path={"id": "5"}), ADMIN)
+    assert exc.value.status == 400
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize(
+    "body, rows, status, message",
+    [
+        ({"title": "New"}, [None], 404, "Position not found"),
+        ({"isDeleted": True}, [{"title": "Old"}, {"employee_exists": 1}], 409,
+         "Employees still hold this position; change their position first"),
+        ({"title": "New"}, [{"title": "Old"}, {"position_exists": 1}], 409,
+         "A position with that title already exists"),
+        (
+            {"hourlyRate": "25", "effectiveFrom": "2026-11-14"},
+            [{"title": "Old"}, {"latest_released_period_end": datetime.date(2026, 11, 14)}],
+            400, "effectiveFrom must be after 2026-11-14, the end of the latest released pay period",
+        ),
+    ],
+)
+def test_update_position_rejects_conflicts_without_writes(monkeypatch, db, body, rows, status, message):
+    one = Mock(side_effect=rows)
+    query = Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+
+    with pytest.raises(processing.HttpError) as exc:
+        processing.update_position(event(body=body, path={"id": "5"}), ADMIN)
+
+    assert exc.value.status == status
+    assert str(exc.value) == message
+    query.assert_not_called()
+    if "title" in body and len(rows) == 2:
+        assert one.call_args_list[1].args[2] == ("New", 5)
+
+
+@pytest.mark.parametrize(
+    "previous, action, old_value",
+    [
+        (None, "INSERT", None),
+        ({"hourly_wage": Decimal("20")}, "UPDATE", {"hourly_wage": Decimal("20")}),
+    ],
+)
+def test_update_position_upserts_wage_and_audits(monkeypatch, db, previous, action, old_value):
+    one = Mock(side_effect=[
+        {"title": "Old", "pay_grade": "P1"},
+        {"latest_released_period_end": datetime.date(2026, 11, 14)},
+        previous,
+    ])
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+    monkeypatch.setattr(processing, "position_json", Mock(return_value={"positionId": 5}))
+
+    result = processing.update_position(event(path={"id": "5"}, body={
+        "hourlyRate": "25.50", "effectiveFrom": "2026-11-15",
+    }), ADMIN)
+
+    assert result == {"positionId": 5}
+    assert "ON CONFLICT" in query.call_args.args[1]
+    assert query.call_args.args[2] == (5, Decimal("25.50"), TODAY, 17)
+    assert audit.call_args.args == (
+        db, ADMIN, "position_wage", "5:2026-11-15", action, old_value,
+        {"hourly_wage": Decimal("25.50"), "effective_from": TODAY},
+    )
+
+
+def test_update_position_changes_fields_and_deletes_when_unassigned(monkeypatch, db):
+    one = Mock(side_effect=[{"title": "Old", "pay_grade": "P1"}, None, None])
+    query, audit = Mock(), Mock()
+    monkeypatch.setattr(processing, "one", one)
+    monkeypatch.setattr(processing, "query", query)
+    monkeypatch.setattr(processing, "audit", audit)
+
+    response = processing.update_position(event(path={"id": "5"}, body={
+        "title": "New", "payGrade": "P2", "isDeleted": True,
+    }), ADMIN)
+
+    assert response["statusCode"] == 204
+    assert response["body"] == ""
+    assert query.call_args_list[0].args[2] == ["New", "P2", 5]
+    assert query.call_args_list[1].args[2] == (5,)
+    assert audit.call_args_list[0].args == (
+        db, ADMIN, "position", 5, "UPDATE", {"title": "Old", "pay_grade": "P1"},
+        {"title": "New", "pay_grade": "P2"},
+    )
+    assert audit.call_args_list[1].args == (
+        db, ADMIN, "position", 5, "DELETE", {"is_deleted": False}, {"is_deleted": True}
+    )
