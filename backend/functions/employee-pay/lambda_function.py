@@ -58,7 +58,7 @@ def list_stubs(event, ctx):
         if pay_date_boundary:
             where_conditions.append(f"pp.pay_date {comparison_operator} %s")
             query_values.append(pay_date_boundary)
-    paystub_rows = query(get_conn(), f"""SELECT pp.pay_date, pp.start_date, pp.end_date, ps.regular_hours + ps.overtime_hours + ps.double_overtime_hours AS hours,
+    paystub_rows = query(get_conn(), f"""SELECT pp.pay_date, pp.start_date, pp.end_date, {PAID_HOURS_SQL} AS hours,
                                         ps.gross_pay, ps.net_pay
                                    FROM paystub ps JOIN pay_period pp ON pp.pay_period_id = ps.pay_period_id
                                   WHERE {' AND '.join(where_conditions)} ORDER BY pp.pay_date DESC""", query_values)
