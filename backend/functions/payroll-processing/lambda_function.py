@@ -567,6 +567,23 @@ def list_stat_holidays(event, request_context):
             for holiday_row in holiday_rows
         ]
     }
+    
+    
+def assert_date_not_released(connection, holiday_date):
+    """A stat holiday inside a released pay period can no longer be added or removed."""
+    released_period = one(
+        connection,
+        """
+        SELECT 1 AS period_exists
+        FROM pay_period
+        WHERE %s::date BETWEEN start_date AND end_date
+          AND status = 'RELEASED'
+        """,
+        (holiday_date,)
+    )
+
+    if released_period:
+        raise HttpError(409, "That date is inside a pay period that has already been released")
 
 
 lambda_handler = router({
