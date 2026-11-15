@@ -10,7 +10,37 @@ globalThis.localStorage = {
 const server = await createServer({ server: { middlewareMode: true } })
 try {
   const { mockApi: api } = await server.ssrLoadModule('/src/lib/manager/mock.ts')
+  const { loadPeriodEntries, summarizePeriod } = await server.ssrLoadModule('/src/lib/manager/timesheets.ts')
   const period = { from: '2026-11-09', to: '2026-11-22' }
+  const complete = await api.listTimesheets({ ...period })
+  const offsets = []
+  const allEntries = await loadPeriodEntries({
+    async listTimesheets(query) {
+      offsets.push(query.offset)
+      assert.equal(query.status, undefined, 'Summaries must include every entry status')
+      return { timesheets: complete.timesheets.slice(query.offset, query.offset + 2), limit: 2, offset: query.offset }
+    },
+  }, period)
+  assert.deepEqual(offsets, [0, 2, 4, 6])
+  assert.equal(allEntries.length, 6, 'Do not summarize only the first API page')
+  const summaries = summarizePeriod(allEntries)
+  assert.equal(summaries.length, 2)
+  const alex = summaries.find(s => s.employeeId === 'E1001')
+  const carol = summaries.find(s => s.employeeId === 'E1003')
+  assert.equal(alex.hours, 24)
+  assert.equal(alex.days, 3)
+  assert.equal(alex.status, 'Pending')
+  assert.equal(alex.canApprove, true)
+  assert.equal(carol.status, 'Partially submitted')
+  assert.equal(carol.canApprove, false)
+  assert.equal(carol.canReturn, true)
+  assert.ok(alex.entries.every((e, i, rows) => !i || e.date >= rows[i - 1].date))
+  const sameDay = summarizePeriod([allEntries[0], { ...allEntries[0], timesheetId: 'extra', startTime: '17:00', endTime: '18:00' }])[0]
+  assert.equal(sameDay.days, 1)
+  assert.equal(sameDay.hours, 9)
+  assert.equal(summarizePeriod(allEntries.map(e => ({ ...e, submitted: true, approved: true })))[0].status, 'Approved')
+  assert.equal(summarizePeriod(allEntries.map(e => ({ ...e, submitted: false, approved: false })))[0].status, 'Unsubmitted')
+  assert.deepEqual(summarizePeriod([]), [])
   const initial = await api.listTimesheets({ status: 'pending', limit: 2 })
   assert.equal(initial.timesheets.length, 2)
   assert.ok(initial.timesheets.every(t => t.submitted && !t.approved))
@@ -43,7 +73,7 @@ try {
   assert.ok(!(await api.listProjects()).some(p => p.projectId === disposable.projectId))
   await assert.rejects(api.createProject({ name: 'Reuse', projectCode: 900 }), /already used/)
   assert.ok(storage.has('mock.manager.v1'))
-  console.log('Manager checks passed: filtering, pagination, period reviews, project lifecycle, assignments, and persistence.')
+  console.log('Manager checks passed: complete-period summaries, pagination, review guards, project lifecycle, assignments, and persistence.')
 } finally {
   await server.close()
 }
