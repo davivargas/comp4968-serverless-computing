@@ -146,7 +146,7 @@
   }
 }
 
-/* Tick the mascot: blinks, glances around, raises its brows and jiggles its bells in time with the pogo hop. */
+/* Penny the mascot: blinks, glances around, raises its brows and jiggles its bells in time with the pogo hop. */
 @theme {
   --animate-blink: blink 4s infinite;
   --animate-glance: glance 6s ease-in-out infinite;

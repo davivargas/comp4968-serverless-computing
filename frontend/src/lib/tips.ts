@@ -1,5 +1,5 @@
 /**
- * General Canadian personal-finance tips that Tick the mascot says on loading screens and when clicked.
+ * General Canadian personal-finance tips that Penny the mascot says on loading screens and when clicked.
  * They stick to rules that rarely change. Yearly dollar limits are left out so the list doesn't go stale.
  * These are general information, not personal financial advice.
  */

@@ -4,13 +4,13 @@ import GlassCracks from '@/components/GlassCracks'
 import Mascot from '@/components/Mascot'
 
 const TOTAL_SECONDS = 8
-// Tick headbutts the glass when this many seconds are left.
+// Penny headbutts the glass when this many seconds are left.
 const SMASH_AT = 4
 // The crack appears at the peak of the lunge, not when it starts.
 const IMPACT_DELAY_MS = 260
 
 /**
- * The easter-egg time-out: Tick marches from its corner to the middle of the screen, growing and turning red,
+ * The easter-egg time-out: Penny marches from its corner to the middle of the screen, growing and turning red,
  * tells the user off in a speech bubble, headbutts the screen hard enough to crack it, then signs them out.
  * Rendered into <body> so nothing in the app can sit on top of it.
  */
@@ -18,7 +18,7 @@ export default function TimeOutScene({ clicks, seconds, onDone }: { clicks: numb
   const [left, setLeft] = useState(TOTAL_SECONDS)
   const lunging = left <= SMASH_AT
   const [red, setRed] = useState(false)
-  // Impact point: the middle of Tick's face, measured when it hits.
+  // Impact point: the middle of Penny's face, measured when it hits.
   const [cracked, setCracked] = useState<{ x: number; y: number } | null>(null)
   const tick = useRef<HTMLDivElement>(null)
   // Offset from the middle of the screen to the corner buddy, so the walk starts from there.
@@ -44,7 +44,7 @@ export default function TimeOutScene({ clicks, seconds, onDone }: { clicks: numb
     if (left !== SMASH_AT) return
     const id = setTimeout(() => {
       // Layout position, not getBoundingClientRect: offsets ignore the walk-in and lunge transforms,
-      // so this is where Tick ends up even if an animation is running late.
+      // so this is where Penny ends up even if an animation is running late.
       // The offset parent is the full-screen layer, so these are viewport coordinates.
       const el = tick.current
       // The face is the circle a little above the middle of the mascot (its feet hang below).
@@ -56,10 +56,10 @@ export default function TimeOutScene({ clicks, seconds, onDone }: { clicks: numb
   return createPortal(
     <div role="alertdialog" aria-modal="true" aria-labelledby="time-out-title" className="fixed inset-0 z-[100] overflow-hidden">
       <div className="absolute inset-0 bg-red-700/25 backdrop-blur-[2px] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-1000" />
-      {/* The whole scene jolts when Tick hits the glass. */}
+      {/* The whole scene jolts when Penny hits the glass. */}
       <div className={cracked ? 'absolute inset-0 motion-safe:animate-jolt' : 'absolute inset-0'}>
         <div className="flex h-full flex-col items-center justify-center gap-6 px-4">
-          {/* Comic speech bubble with its tail pointing down at Tick */}
+          {/* Comic speech bubble with its tail pointing down at Penny */}
           <div className="relative w-full max-w-sm rounded-[28px] border-[3px] border-red-600 bg-white px-6 py-5 text-center text-slate-900 shadow-2xl motion-safe:animate-[pop_0.3s_ease-out_2.2s_both]">
             <h2 id="time-out-title" className="text-lg font-black tracking-wide text-red-600 uppercase">Okay, that's enough!</h2>
             <p className="mt-2 text-sm leading-relaxed font-medium">
@@ -73,7 +73,7 @@ export default function TimeOutScene({ clicks, seconds, onDone }: { clicks: numb
           {/* Walks in from the bottom-right corner while growing. */}
           <div ref={tick} className="motion-safe:animate-march" style={{ '--from-x': `${from.x}px`, '--from-y': `${from.y}px` } as CSSProperties}>
             <div className={lunging ? 'motion-safe:animate-lunge' : 'motion-safe:animate-shake'}>
-              <Mascot className="size-[min(240px,34vh)] drop-shadow-[0_20px_30px_rgb(0_0_0/0.4)]" mode={red ? 'angry' : 'idle'} label="Tick, very angry" />
+              <Mascot className="size-[min(240px,34vh)] drop-shadow-[0_20px_30px_rgb(0_0_0/0.4)]" mode={red ? 'angry' : 'idle'} label="Penny, very angry" />
             </div>
           </div>
         </div>

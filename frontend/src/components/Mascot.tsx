@@ -5,11 +5,11 @@ const INK = '#0f172a'
 const pivot = { transformBox: 'view-box', transformOrigin: '32px 42px' } as const
 const own = { transformBox: 'fill-box', transformOrigin: 'center' } as const
 const bellBase = { transformBox: 'fill-box', transformOrigin: '50% 100%' } as const
-// Colours fade slowly, so Tick turns red gradually when it gets angry.
+// Colours fade slowly, so Penny turns red gradually when it gets angry.
 const fade = 'transition-[fill,stroke,opacity] duration-[2500ms]'
 
 /**
- * Tick, the Timely mascot: an alarm clock with googly eyes.
+ * Penny, the Timely mascot: an alarm clock with googly eyes.
  * - `still`: the logo.
  * - `idle`: blinks and glances around, for the corner buddy.
  * - `busy`: also spins its hands, jiggles its bells and raises its brows in time with the pogo hop, for loaders.
@@ -18,7 +18,7 @@ const fade = 'transition-[fill,stroke,opacity] duration-[2500ms]'
  */
 export type MascotMode = 'still' | 'idle' | 'busy' | 'angry'
 
-export default function Mascot({ className = 'size-12', mode = 'still', label = 'Tick, the Timely clock' }: { className?: string; mode?: MascotMode; label?: string }) {
+export default function Mascot({ className = 'size-12', mode = 'still', label = 'Penny, the Timely clock' }: { className?: string; mode?: MascotMode; label?: string }) {
   const angry = mode === 'angry'
   const busy = (cls: string) => (mode === 'busy' ? cls : undefined)
   const face = (cls: string) => (mode === 'idle' || mode === 'busy' ? cls : undefined)
