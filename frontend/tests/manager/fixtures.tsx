@@ -2,9 +2,10 @@ import type { ReactNode } from 'react'
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SessionContext, type Session } from '@/components/auth/session-context'
+import type { Me } from '@/lib/auth'
 import type { ManagedEmployee, ManagerProject, ManagerTimesheet } from '@/lib/manager/types'
 
-export const manager = { employeeId: '42', firstName: 'Kevin', lastName: 'Romero', availableRoles: ['EMPLOYEE', 'MANAGER'] as Session['me']['availableRoles'] }
+export const manager = { employeeId: '42', firstName: 'Kevin', lastName: 'Romero', availableRoles: ['EMPLOYEE', 'MANAGER'] } satisfies Me
 export const people: ManagedEmployee[] = [
   { employeeId: '51', firstName: 'Juan', lastName: 'Pablo', email: 'juan@example.com', status: 'ACTIVE', position: 'Developer', team: 'Engineering' },
   { employeeId: '52', firstName: 'Maria', lastName: 'Sanchez', email: 'maria@example.com', status: 'ACTIVE', position: 'Designer', team: 'Engineering' },
