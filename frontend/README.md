@@ -1,5 +1,11 @@
 # React + TypeScript + Vite
 
+## UI tests
+
+Run `npm.cmd run test:ui` from this folder to run the manager UI interaction tests.
+Run `npm.cmd run test:ui:types` to type-check them, or `npm.cmd run test:ui:watch` for watch mode.
+See [tests/README.md](tests/README.md) for coverage, targeted commands, and test limitations.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:
