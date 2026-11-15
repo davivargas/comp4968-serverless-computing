@@ -1,0 +1,3 @@
+pg8000>=1.30
+tzdata
+python-dateutil>=2.8.2,<3   # pg8000 needs it; <3 matches what boto3 in the Lambda runtime expects

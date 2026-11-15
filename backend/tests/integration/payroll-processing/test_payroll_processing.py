@@ -2,7 +2,6 @@ import datetime
 import importlib.util
 import json
 import sys
-import types
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -11,18 +10,8 @@ from unittest.mock import Mock
 import pytest
 
 
-BACKEND = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(BACKEND / "layers" / "python"))
-sys.modules.setdefault("boto3", types.ModuleType("boto3"))
-pg8000 = types.ModuleType("pg8000")
-pg8000.dbapi = types.ModuleType("pg8000.dbapi")
-sys.modules.setdefault("pg8000", pg8000)
-sys.modules.setdefault("pg8000.dbapi", pg8000.dbapi)
-dateutil = types.ModuleType("dateutil")
-dateutil.relativedelta = types.ModuleType("dateutil.relativedelta")
-dateutil.relativedelta.relativedelta = object
-sys.modules.setdefault("dateutil", dateutil)
-sys.modules.setdefault("dateutil.relativedelta", dateutil.relativedelta)
+BACKEND = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(BACKEND / "layers" / "common" / "python"))
 SPEC = importlib.util.spec_from_file_location(
     "payroll_processing", BACKEND / "functions" / "payroll-processing" / "lambda_function.py"
 )

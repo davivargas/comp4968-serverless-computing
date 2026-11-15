@@ -69,9 +69,7 @@ def get_user(conn, emp_id):
     return user_json(r)
 
 
-# ---- users -------------------------------------------------------------------------------------------------------
 def create_account(event, ctx):
-    """POST /it/create-account  body: {firstName, lastName, email, positionId, hireDate, phone?, address?, teamId?, role?}"""
     b = parse_body(event)
     email = require_email(b.get("email"))
     rec = {"first_name": require_str(b.get("firstName"), "firstName", 100), "last_name": require_str(b.get("lastName"), "lastName", 100),
@@ -106,7 +104,7 @@ def create_account(event, ctx):
             audit(conn, ctx, "employee", row["employee_id"], "INSERT", None, {**rec, **addr, "role_id": rid})
             out_user = get_user(conn, row["employee_id"])
     except BaseException:
-        # keep Cognito and the database consistent: remove the just-created Cognito user
+
         try:
             cognito().admin_delete_user(UserPoolId=pool(), Username=sub)
         except Exception as e:
@@ -116,7 +114,6 @@ def create_account(event, ctx):
 
 
 def list_users(event, ctx):
-    """GET /it/users?status=&role=&teamId=&search=&sort=id|name|email&order=&limit=&offset="""
     q = qs(event)
     where, p = [], []
     if q.get("status"):
@@ -139,12 +136,10 @@ def list_users(event, ctx):
 
 
 def get_one(event, ctx):
-    """GET /it/users/{id}"""
     return get_user(get_conn(), path_id(event))
 
 
 def reset_password(event, ctx):
-    """POST /it/users/{id}/reset-password  (Cognito emails the user a reset code)"""
     emp_id = path_id(event)
     conn = get_conn()
     u = get_user(conn, emp_id)
@@ -158,7 +153,6 @@ def reset_password(event, ctx):
 
 
 def update_user(event, ctx):
-    """PATCH /it/users/{id}  any of {firstName, lastName, email, phone, address, positionId, teamId}"""
     emp_id, b, ch = path_id(event), parse_body(event), {}
     if "firstName" in b:
         ch["first_name"] = require_str(b["firstName"], "firstName", 100)
@@ -197,7 +191,6 @@ def update_user(event, ctx):
 
 
 def set_status(event, ctx):
-    """PATCH /it/users/{id}/status  body {status: ACTIVE | DEACTIVATED}"""
     emp_id = path_id(event)
     status = one_of(parse_body(event).get("status"), "status", ["ACTIVE", "DEACTIVATED"])
     if emp_id == ctx["employee_id"] and status == "DEACTIVATED":
@@ -225,7 +218,6 @@ def set_status(event, ctx):
 
 
 def set_role(event, ctx):
-    """PATCH /it/users/{id}/role  body {role: MANAGER | PAYROLL_ADMIN | IT | EMPLOYEE | null}"""
     emp_id, b = path_id(event), parse_body(event)
     if "role" not in b:
         bad('role is required (use null or "EMPLOYEE" for no elevated role)')
@@ -245,7 +237,6 @@ def set_role(event, ctx):
         return get_user(conn, emp_id)
 
 
-# ---- teams (a team = department = the group of people one manager manages) -----------------------------------
 TEAM_SELECT = """SELECT t.team_id, t.name, t.manager_id, m.first_name || ' ' || m.last_name AS manager_name,
                         (SELECT COUNT(*) FROM employee e WHERE e.team_id = t.team_id)::int AS member_count
                    FROM team t JOIN employee m ON m.employee_id = t.manager_id"""
@@ -265,13 +256,11 @@ def check_manager(conn, manager_id):
 
 
 def list_teams(event, ctx):
-    """GET /it/teams - deleted teams are not listed"""
     rows = query(get_conn(), f"{TEAM_SELECT} WHERE NOT t.is_deleted ORDER BY t.name")
     return {"teams": [team_json(r) for r in rows]}
 
 
 def create_team(event, ctx):
-    """POST /it/teams  body {name, managerId}"""
     b = parse_body(event)
     name, mgr = require_str(b.get("name"), "name", 100), require_int(b.get("managerId"), "managerId")
     with transaction() as conn:
@@ -284,7 +273,6 @@ def create_team(event, ctx):
 
 
 def update_team(event, ctx):
-    """PATCH /it/teams/{id}  any of {name, managerId, isDeleted: true}"""
     tid, b, ch = path_id(event), parse_body(event), {}
     if "name" in b:
         ch["name"] = require_str(b["name"], "name", 100)
@@ -315,7 +303,6 @@ def update_team(event, ctx):
 
 
 def list_positions(event, ctx):
-    """GET /it/positions - for the position dropdowns. No wages are returned. Deleted positions are not listed."""
     rows = query(get_conn(), "SELECT position_id, title, pay_grade FROM position WHERE NOT is_deleted ORDER BY title")
     return {"positions": [{"positionId": r["position_id"], "title": r["title"], "payGrade": r["pay_grade"]} for r in rows]}
 
