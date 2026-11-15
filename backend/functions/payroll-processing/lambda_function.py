@@ -7,7 +7,7 @@ from payroll_common.audit import audit
 from payroll_common.auth import with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, created, no_content, parse_body, router, qs
-from payroll_common.validate import bad, path_id, require_bool_true, require_date, require_str
+from payroll_common.validate import bad, paging, path_id, require_bool_true, require_date, require_str
 
 
 PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
@@ -17,7 +17,7 @@ PAYROLL_ADMIN_ROLES = ["PAYROLL_ADMIN"]
 def list_periods(event, request_context):
     """GET /pa/pay-periods?limit=&offset=  - canRelease drives the Release button."""
     today = payroll.today_bc()
-    limit, offset = payroll.paging(qs(event), 26, 100)
+    limit, offset = paging(qs(event), 26, 100)
     with transaction() as connection:
         payroll.ensure_periods(connection, today)
     pay_period_rows = query(get_conn(), """
