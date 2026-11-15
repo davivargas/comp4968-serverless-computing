@@ -1,4 +1,5 @@
-import { LayoutDashboard, LogOut, Network, Users } from 'lucide-react'
+import AccountMenu from '@/components/auth/AccountMenu'
+import { LayoutDashboard, Network, Users } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -8,6 +9,8 @@ import {
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import Mascot from '@/components/Mascot'
+import TipBuddy from '@/components/TipBuddy'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/it/api'
 import { useMe } from '@/lib/it/hooks'
@@ -32,7 +35,7 @@ export default function ITLayout() {
               <SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild>
                   <Link to="/it">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">{APP_NAME[0]}</div>
+                    <Mascot className="!size-8 shrink-0" label="" />
                     <div className="grid leading-tight">
                       <span className="font-semibold">{APP_NAME}</span>
                       <span className="text-xs text-muted-foreground">IT portal</span>
@@ -61,16 +64,7 @@ export default function ITLayout() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Sign out">
-                  <Link to="/">
-                    <LogOut />
-                    <span>Sign out</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <AccountMenu />
           </SidebarFooter>
           <SidebarRail />
         </Sidebar>
@@ -90,7 +84,7 @@ export default function ITLayout() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      <Toaster position="bottom-right" />
+      <TipBuddy /><Toaster position="bottom-right" offset={{ bottom: 96 }} />
     </TooltipProvider>
   )
 }

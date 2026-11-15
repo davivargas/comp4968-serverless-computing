@@ -57,7 +57,7 @@ export const mockApi: ManagerApi = {
     save()
     return result({ entries: rows })
   },
-  async listEmployees(projectId) { return result(employees.filter(e => !projectId || (project(projectId) && state.assignments[projectId].includes(e.employeeId)))) },
+  async listEmployees(_managerId, projectId) { return result(employees.filter(e => !projectId || (project(projectId) && state.assignments[projectId].includes(e.employeeId)))) },
   async listProjects() { return result(state.projects.filter(p => !state.deleted.includes(p.projectId))) },
   async createProject(input) {
     if (!input.name.trim()) throw new Error('Project name is required')

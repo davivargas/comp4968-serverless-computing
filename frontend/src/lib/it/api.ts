@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
 import type {
@@ -38,14 +39,9 @@ const ACTIVE_ROLE: Role = 'IT'
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', 'X-Active-Role': ACTIVE_ROLE, ...(await authHeaders()), ...init?.headers },
   })
-  if (!res.ok) {
-    const text = await res.text()
-    let message = text
-    try { message = (JSON.parse(text) as { message?: string }).message ?? text } catch { /* plain text */ }
-    throw new Error(message || `${res.status} ${res.statusText}`)
-  }
+  if (!res.ok) throw await apiError(res)
   return res.status === 204 ? (undefined as T) : res.json()
 }
 

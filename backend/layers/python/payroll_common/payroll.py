@@ -4,6 +4,8 @@ from collections import defaultdict
 from fractions import Fraction
 from zoneinfo import ZoneInfo
 
+from dateutil.relativedelta import relativedelta
+
 from . import rates as R
 from .db import one, query
 from .http_utils import HttpError
@@ -66,7 +68,26 @@ def assert_date_editable(conn, d):
 
 
 def vacation_rate_for(hire_date, period_end):
+    if period_end <= hire_date + relativedelta(years=1):
+        return ZERO
     return Fraction(6, 100) if (period_end - hire_date).days >= 5 * 365 + 1 else Fraction(4, 100)
+
+
+def sick_days_per_year():
+    return int(os.environ.get("SICK_DAYS_PER_YEAR", 5))
+
+
+def sick_dates_used(conn, emp_id, year):
+    rows = query(conn, """SELECT DISTINCT t.work_date FROM timesheet_entry t JOIN project p ON p.project_id = t.project_id
+                           WHERE t.employee_id = %s AND NOT t.is_deleted AND p.special_type = 'SICK'
+                             AND t.work_date BETWEEN %s AND %s ORDER BY t.work_date""",
+                 (emp_id, datetime.date(year, 1, 1), datetime.date(year, 12, 31)))
+    return [r["work_date"] for r in rows]
+
+
+def stat_dates_between(conn, start, end):
+    rows = query(conn, "SELECT holiday_date FROM stat_holiday WHERE holiday_date BETWEEN %s AND %s", (start, end))
+    return {r["holiday_date"] for r in rows}
 
 
 def wage_for(wages, d):
@@ -136,11 +157,13 @@ def income_tax(gross_c, cpp1_c, cpp2_c, ei_c, rates):
     a = max(ZERO, P * (i - f5a))
     credit_base = (min(P * cpp1 * F(cpp["base_rate"]) / F(cpp["rate"]), F(cpp["base_credit_max"]))
                    + min(P * ei, F(rates["ei"]["max"])))
+
     fed = t["federal"]
     r, k = _bracket(a, fed["brackets"])
     k2 = F(fed["lowest_rate"]) * credit_base
     k4 = min(F(fed["lowest_rate"]) * a, F(fed["lowest_rate"]) * t["cea"])
     t3 = max(ZERO, r * a - k - k2 - k4)
+
     bc = t["bc"]
     v, kp = _bracket(a, bc["brackets"])
     k2p = F(bc["lowest_rate"]) * credit_base
@@ -156,50 +179,86 @@ def income_tax(gross_c, cpp1_c, cpp2_c, ei_c, rates):
     return half_up(t3 * 100 / P), half_up(t2 * 100 / P)
 
 
-def calculate_paystub(entries, period_start, vacation_rate, ytd, rates):
-    daily = defaultdict(int)
-    for e in entries:
-        daily[e["date"]] += e["minutes"]
-    alloc = allocate_days(daily, period_start)
-    rate_c = {}
-    for e in entries:
-        rate_c[e["date"]] = cents(e["rate"])
+def calculate_paystub(entries, period_start, vacation_rate, ytd, rates, stat_dates=()):
+    stat_dates = set(stat_dates)
+    work = [e for e in entries if e.get("kind", "WORK") == "WORK"]
+    sick = [e for e in entries if e.get("kind") == "SICK"]
+    vac = [e for e in entries if e.get("kind") == "VAC"]
+    rate_c = {e["date"]: cents(e["rate"]) for e in entries}
 
-    tiers = defaultdict(lambda: [0, 0, 0])
+    daily = defaultdict(int)
+    for e in work:
+        daily[e["date"]] += e["minutes"]
+    premium = {d for d in daily if d.weekday() >= 5 or d in stat_dates}
+    alloc = allocate_days({d: m for d, m in daily.items() if d not in premium}, period_start)
+
+    tiers = defaultdict(lambda: [0, 0, 0, 0, 0])
     for d, (a, b, c_) in alloc.items():
         t = tiers[rate_c[d]]
         t[0] += a
         t[1] += b
         t[2] += c_
-    reg_c = ot_c = dot_c = 0
+    for d in premium:
+        m = daily[d]
+        t = tiers[rate_c[d]]
+        t[4 if d in stat_dates else 3] += min(m, 720)
+        t[2] += max(m - 720, 0)
+    sick_min = defaultdict(int)
+    for e in sick:
+        sick_min[rate_c[e["date"]]] += e["minutes"]
+    vac_min = sum(e["minutes"] for e in vac)
+
+    hrs = lambda m: dollars(half_up(Fraction(m, 60) * 100))
+    reg_c = ot_c = dot_c = wk_c = st_c = sick_c = 0
     lines = []
-    for rc, (rm, om, dm) in sorted(tiers.items()):
+    for rc in sorted(set(tiers) | set(sick_min)):
+        rm, om, dm, wm, sm = tiers[rc] if rc in tiers else (0, 0, 0, 0, 0)
         reg_c += half_up(Fraction(rm * rc, 60))
         ot_c += half_up(Fraction(om * rc * 3, 120))
         dot_c += half_up(Fraction(dm * rc * 2, 60))
+        wk_c += half_up(Fraction(wm * rc * 3, 120))
+        st_c += half_up(Fraction(sm * rc * 3, 120))
         ot_base, dot_base = half_up(Fraction(om * rc, 60)), half_up(Fraction(dm * rc, 60))
+        wk_base, st_base = half_up(Fraction(wm * rc, 60)), half_up(Fraction(sm * rc, 60))
+
         by_project = defaultdict(int)
-        for e in entries:
+        for e in work:
             if rate_c[e["date"]] == rc:
                 by_project[(e["project_id"], e["project_code"])] += e["minutes"]
-        target = half_up(Fraction(rm * rc, 60)) + ot_base + dot_base
-        amounts = {k: half_up(Fraction(m * rc, 60)) for k, m in by_project.items()}
-        biggest = max(by_project, key=lambda k: by_project[k])
-        amounts[biggest] += target - sum(amounts.values())
-        for (pid, pcode), m in sorted(by_project.items(), key=lambda kv: kv[0][1]):
-            lines.append({"line_type": "PROJECT", "project_id": pid, "project_code": pcode,
-                          "hours": dollars(half_up(Fraction(m, 60) * 100)), "rate": dollars(rc), "amount": dollars(amounts[(pid, pcode)])})
+        if by_project:
+            target = half_up(Fraction(rm * rc, 60)) + ot_base + dot_base + wk_base + st_base
+            amounts = {k: half_up(Fraction(m * rc, 60)) for k, m in by_project.items()}
+            biggest = max(by_project, key=lambda k: by_project[k])
+            amounts[biggest] += target - sum(amounts.values())
+            for (pid, pcode), m in sorted(by_project.items(), key=lambda kv: kv[0][1]):
+                lines.append({"line_type": "PROJECT", "project_id": pid, "project_code": pcode,
+                              "hours": hrs(m), "rate": dollars(rc), "amount": dollars(amounts[(pid, pcode)])})
         if om:
             lines.append({"line_type": "OVERTIME_PREMIUM", "project_id": None, "project_code": None,
-                          "hours": dollars(half_up(Fraction(om, 60) * 100)), "rate": dollars(half_up(Fraction(rc, 2))),
+                          "hours": hrs(om), "rate": dollars(half_up(Fraction(rc, 2))),
                           "amount": dollars(half_up(Fraction(om * rc * 3, 120)) - ot_base)})
         if dm:
             lines.append({"line_type": "OVERTIME_PREMIUM", "project_id": None, "project_code": None,
-                          "hours": dollars(half_up(Fraction(dm, 60) * 100)), "rate": dollars(rc),
+                          "hours": hrs(dm), "rate": dollars(rc),
                           "amount": dollars(half_up(Fraction(dm * rc * 2, 60)) - dot_base)})
-    work_c = reg_c + ot_c + dot_c
-    vac_c = half_up(work_c * vacation_rate)
-    gross_c = work_c + vac_c
+        if wm:
+            lines.append({"line_type": "WEEKEND_PREMIUM", "project_id": None, "project_code": None,
+                          "hours": hrs(wm), "rate": dollars(half_up(Fraction(rc, 2))),
+                          "amount": dollars(half_up(Fraction(wm * rc * 3, 120)) - wk_base)})
+        if sm:
+            lines.append({"line_type": "STAT_PREMIUM", "project_id": None, "project_code": None,
+                          "hours": hrs(sm), "rate": dollars(half_up(Fraction(rc, 2))),
+                          "amount": dollars(half_up(Fraction(sm * rc * 3, 120)) - st_base)})
+        if sick_min.get(rc):
+            amount = half_up(Fraction(sick_min[rc] * rc, 60))
+            sick_c += amount
+            first = next(e for e in sick if rate_c[e["date"]] == rc)
+            lines.append({"line_type": "SICK", "project_id": first["project_id"], "project_code": first["project_code"],
+                          "hours": hrs(sick_min[rc]), "rate": dollars(rc), "amount": dollars(amount)})
+
+    paid_c = reg_c + ot_c + dot_c + wk_c + st_c + sick_c
+    vac_c = half_up(paid_c * vacation_rate)
+    gross_c = paid_c + vac_c
     if vac_c:
         lines.append({"line_type": "VACATION", "project_id": None, "project_code": None,
                       "hours": 0, "rate": 0, "amount": dollars(vac_c)})
@@ -209,19 +268,25 @@ def calculate_paystub(entries, period_start, vacation_rate, ytd, rates):
     fed_c, prov_c = income_tax(gross_c, cpp1, cpp2, ei_c, rates)
     ded_c = cpp_c + ei_c + fed_c + prov_c
     net_c = gross_c - ded_c
-    hrs = lambda m: dollars(half_up(Fraction(m, 60) * 100))
     reg_m = sum(t[0] for t in tiers.values())
     ot_m = sum(t[1] for t in tiers.values())
     dot_m = sum(t[2] for t in tiers.values())
+    wk_m = sum(t[3] for t in tiers.values())
+    st_m = sum(t[4] for t in tiers.values())
+    sick_m = sum(sick_min.values())
     last_rate = rate_c[max(rate_c)]
     return {
         "hourly_rate": dollars(last_rate),
         "regular_hours": hrs(reg_m), "overtime_hours": hrs(ot_m), "double_overtime_hours": hrs(dot_m),
         "regular_pay": dollars(reg_c), "overtime_pay": dollars(ot_c), "double_overtime_pay": dollars(dot_c),
+        "weekend_hours": hrs(wk_m), "weekend_pay": dollars(wk_c),
+        "stat_hours": hrs(st_m), "stat_pay": dollars(st_c),
+        "sick_hours": hrs(sick_m), "sick_pay": dollars(sick_c),
+        "vacation_leave_hours": hrs(vac_min),
         "vacation_pay": dollars(vac_c), "gross_pay": dollars(gross_c),
         "cpp": dollars(cpp_c), "ei": dollars(ei_c), "federal_tax": dollars(fed_c), "provincial_tax": dollars(prov_c),
         "total_deductions": dollars(ded_c), "net_pay": dollars(net_c),
-        "ytd_hours": round(float(ytd["hours"]) + hrs(reg_m + ot_m + dot_m), 2),
+        "ytd_hours": round(float(ytd["hours"]) + hrs(reg_m + ot_m + dot_m + wk_m + st_m + sick_m), 2),
         "ytd_gross": dollars(cents(ytd["gross"]) + gross_c), "ytd_cpp": dollars(cents(ytd["cpp"]) + cpp_c),
         "ytd_ei": dollars(cents(ytd["ei"]) + ei_c), "ytd_federal_tax": dollars(cents(ytd["federal"]) + fed_c),
         "ytd_provincial_tax": dollars(cents(ytd["provincial"]) + prov_c), "ytd_net": dollars(cents(ytd["net"]) + net_c),

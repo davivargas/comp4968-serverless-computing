@@ -1,4 +1,5 @@
-import { ClipboardCheck, FolderKanban, LayoutDashboard, LogOut, Users } from 'lucide-react'
+import AccountMenu from '@/components/auth/AccountMenu'
+import { ClipboardCheck, FolderKanban, LayoutDashboard, Users } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -8,9 +9,11 @@ import {
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import Mascot from '@/components/Mascot'
+import TipBuddy from '@/components/TipBuddy'
 import { APP_NAME } from '@/lib/brand'
 import { usingMockApi } from '@/lib/manager/api'
-import { CURRENT_MANAGER } from '@/lib/manager/session'
+import { useSession } from '@/components/auth/session-context'
 
 const NAV = [
   { to: '/manager/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -20,6 +23,7 @@ const NAV = [
 ]
 
 export default function ManagerLayout() {
+  const { me } = useSession()
   const { pathname } = useLocation()
   const current = NAV.find((n) => pathname.startsWith(n.to))
 
@@ -32,7 +36,7 @@ export default function ManagerLayout() {
               <SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild>
                   <Link to="/manager">
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">{APP_NAME[0]}</div>
+                    <Mascot className="!size-8 shrink-0" label="" />
                     <div className="grid leading-tight">
                       <span className="font-semibold">{APP_NAME}</span>
                       <span className="text-xs text-muted-foreground">Manager portal</span>
@@ -61,16 +65,7 @@ export default function ManagerLayout() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Sign out">
-                  <Link to="/">
-                    <LogOut />
-                    <span>Sign out</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <AccountMenu />
           </SidebarFooter>
           <SidebarRail />
         </Sidebar>
@@ -80,7 +75,7 @@ export default function ManagerLayout() {
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="text-sm font-medium">{current?.label}</span>
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-sm">Hi, <span className="font-medium">{CURRENT_MANAGER.firstName}</span></span>
+              <span className="text-sm">Hi, <span className="font-medium">{me?.firstName}</span></span>
               {usingMockApi && <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">Mock API</span>}
               <ModeToggle />
             </div>
@@ -90,7 +85,7 @@ export default function ManagerLayout() {
           </div>
         </SidebarInset>
       </SidebarProvider>
-      <Toaster position="bottom-right" />
+      <TipBuddy /><Toaster position="bottom-right" offset={{ bottom: 96 }} />
     </TooltipProvider>
   )
 }

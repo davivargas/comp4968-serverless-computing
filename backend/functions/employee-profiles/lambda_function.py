@@ -1,4 +1,3 @@
-"""Person 3 - GET /me, employee personal profile and direct deposit."""
 import base64
 import os
 
@@ -24,7 +23,6 @@ def _kms_encrypt(plaintext):
 
 
 def get_me(event, ctx):
-    """GET /me - used right after the Cognito sign-in to fill the role choice on the login page."""
     return {"employeeId": ctx["employee_id"], "firstName": ctx["first_name"], "lastName": ctx["last_name"],
             "availableRoles": ctx["available"]}
 
@@ -42,21 +40,19 @@ def _profile(conn, emp_id):
     deposit = None
     if r["institution_no"]:
         deposit = {"institutionNumber": r["institution_no"], "transitNumber": r["transit_no"],
-                   "accountNumber": mask(r["account_last4"])}   # the full account number is never returned
+                   "accountNumber": mask(r["account_last4"])}
     return {"employeeId": r["employee_id"], "firstName": r["first_name"], "lastName": r["last_name"], "email": r["email"],
             "position": r["position"], "payGrade": r["pay_grade"], "hourlyRate": r["hourly_wage"], "phone": r["phone"],
             "address": address_json(r), "directDeposit": deposit}
 
 
 def get_profile(event, ctx):
-    """GET /employee/{id}/profile"""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     return _profile(get_conn(), emp_id)
 
 
 def update_profile(event, ctx):
-    """PATCH /employee/{id}/profile  body: any of {phone, address:{...}, directDeposit:{institutionNumber, transitNumber, accountNumber}}"""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     b = parse_body(event)
@@ -104,7 +100,7 @@ def update_profile(event, ctx):
                     sets += ["account_no = %s", "account_last4 = %s"]
                     vals += [encrypted, new_dd["account_no"][-4:]]
                 query(conn, f"UPDATE direct_deposit SET {', '.join(sets)}, updated_at = now() WHERE employee_id = %s", vals + [emp_id])
-            # bank numbers are redacted by the audit helper; the last 4 digits are kept
+
             audit(conn, ctx, "direct_deposit", emp_id, "UPDATE" if prev else "INSERT", prev,
                   {**new_dd, **({"account_last4": new_dd["account_no"][-4:]} if "account_no" in new_dd else {})})
         return _profile(conn, emp_id)

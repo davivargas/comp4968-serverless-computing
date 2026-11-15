@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { employeeApi } from '@/lib/employee/api'
 import { formatDate, formatHours, formatMoney, toISODate } from '@/lib/employee/dates'
-import { DEDUCTION_LABELS, totalDeductions } from '@/lib/employee/pay'
+import { breakdownRows, DEDUCTION_LABELS, earningLabel, totalDeductions, vacationPercent } from '@/lib/employee/pay'
 import type { Deductions, PayStub, PayStubSummary } from '@/lib/employee/types'
 
 /** How far back the date dropdowns reach. */
@@ -41,6 +41,8 @@ export default function PayStubsPage() {
       .then((all) => {
         const dates = all.map((s) => s.payDate) // newest first
         setOptions(dates)
+        // No stubs yet: there's no range to load, so show the empty state instead of loading forever.
+        if (dates.length === 0) setStubs([])
         setTo(dates[0] ?? '')
         setFrom(dates[Math.min(DEFAULT_RANGE, dates.length) - 1] ?? '')
       })
@@ -111,7 +113,9 @@ export default function PayStubsPage() {
               {!stubs ? (
                 <div className="grid gap-2">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-10" />)}</div>
               ) : stubs.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">No pay stubs in this range.</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {options?.length ? 'No pay stubs in this range.' : 'No pay stubs yet. They appear here once payroll releases your first pay period.'}
+                </p>
               ) : (
                 <Table>
                   <TableHeader>
@@ -174,12 +178,13 @@ function DateSelect({ id, value, options, onChange, disable }: { id: string; val
 
 function StubDetail({ stub }: { stub: PayStub }) {
   const keys = Object.keys(DEDUCTION_LABELS) as (keyof Deductions)[]
+  const breakdown = breakdownRows(stub.hoursBreakdown)
   return (
     <>
       <DialogHeader>
         <DialogTitle>Pay statement · {formatDate(stub.payDate)}</DialogTitle>
         <DialogDescription>
-          Period {formatDate(stub.periodStart)} – {formatDate(stub.periodEnd)} · deposited to {stub.depositAccount}
+          Period {formatDate(stub.periodStart)} – {formatDate(stub.periodEnd)}{stub.depositAccount ? ` · deposited to ${stub.depositAccount}` : ' · no direct deposit on file'}
         </DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-3 gap-4 rounded-lg border p-4">
@@ -198,14 +203,17 @@ function StubDetail({ stub }: { stub: PayStub }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {stub.earnings.map((e) => (
-            <TableRow key={e.projectCode}>
-              <TableCell>{e.projectCode}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatHours(e.hours)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatMoney(e.rate)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatMoney(e.amount)}</TableCell>
-            </TableRow>
-          ))}
+          {stub.earnings.map((e, i) => {
+            const pct = vacationPercent(e, stub.earnings)
+            return (
+              <TableRow key={i}>
+                <TableCell>{earningLabel(e)}</TableCell>
+                <TableCell className="text-right tabular-nums">{pct ? '—' : formatHours(e.hours)}</TableCell>
+                <TableCell className="text-right tabular-nums">{pct ?? formatMoney(e.rate)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatMoney(e.amount)}</TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
         <TableFooter>
           <TableRow>
@@ -222,6 +230,27 @@ function StubDetail({ stub }: { stub: PayStub }) {
           </TableRow>
         </TableFooter>
       </Table>
+
+      {breakdown.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Hours by type</TableHead>
+              <TableHead className="text-right">Hours</TableHead>
+              <TableHead className="text-right">Pay</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {breakdown.map((r) => (
+              <TableRow key={r.label}>
+                <TableCell>{r.label}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatHours(r.hours)}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.pay === null ? '—' : formatMoney(r.pay)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
 
       <Separator />
 

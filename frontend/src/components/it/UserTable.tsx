@@ -15,12 +15,12 @@ export function UserTable({
   users, loading, currentUserId, actions,
 }: { users: User[]; loading: boolean; currentUserId: string | undefined; actions: RowActions }) {
   return (
-    <Table className="min-w-[50rem] table-fixed">
+    <Table className="min-w-[65rem] table-fixed">
       <TableHeader>
         <TableRow>
           <TableHead className="w-72">Employee</TableHead>
           <TableHead className="w-44">Position</TableHead>
-          <TableHead>Team / manager</TableHead>
+          <TableHead className="w-56">Team / manager</TableHead>
           <TableHead className="w-40">Access</TableHead>
           <TableHead className="w-28">Status</TableHead>
           <TableHead className="w-20 text-right">Actions</TableHead>
