@@ -1,7 +1,6 @@
 """Payroll release (pay-period level) and position / wage administration (Payroll Admin)."""
-from collections import defaultdict
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from payroll_common import payroll as payroll
 from payroll_common.audit import audit
