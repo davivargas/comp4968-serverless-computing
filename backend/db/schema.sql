@@ -68,10 +68,13 @@ CREATE TABLE project (
   project_code INT NOT NULL UNIQUE,
   name         VARCHAR(200) NOT NULL,
   status       VARCHAR(10) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CLOSED')),
+  special_type VARCHAR(4) CHECK (special_type IN ('SICK','VAC','MISC')),
   is_deleted   BOOLEAN NOT NULL DEFAULT false,
   created_by   INT NOT NULL REFERENCES employee(employee_id),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX project_special_type_uq ON project (special_type) WHERE special_type IS NOT NULL;
 
 CREATE TABLE project_assignment (
   project_id  INT NOT NULL REFERENCES project(project_id),
@@ -103,6 +106,25 @@ CREATE INDEX timesheet_emp_date_idx ON timesheet_entry(employee_id, work_date) W
 CREATE INDEX timesheet_date_idx     ON timesheet_entry(work_date) WHERE NOT is_deleted;
 CREATE INDEX timesheet_project_idx  ON timesheet_entry(project_id);
 
+CREATE TABLE stat_holiday (
+  holiday_date DATE PRIMARY KEY,
+  name         VARCHAR(100) NOT NULL,
+  created_by   INT REFERENCES employee(employee_id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO stat_holiday (holiday_date, name) VALUES
+  (DATE '2026-01-01', 'New Year''s Day'),
+  (DATE '2026-02-16', 'Family Day'),
+  (DATE '2026-04-03', 'Good Friday'),
+  (DATE '2026-05-18', 'Victoria Day'),
+  (DATE '2026-07-01', 'Canada Day'),
+  (DATE '2026-08-03', 'British Columbia Day'),
+  (DATE '2026-09-07', 'Labour Day'),
+  (DATE '2026-09-30', 'National Day for Truth and Reconciliation'),
+  (DATE '2026-10-12', 'Thanksgiving Day'),
+  (DATE '2026-11-11', 'Remembrance Day'),
+  (DATE '2026-12-25', 'Christmas Day');
+
 CREATE TABLE pay_period (
   pay_period_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   start_date    DATE NOT NULL UNIQUE,
@@ -128,6 +150,13 @@ CREATE TABLE paystub (
   regular_pay           NUMERIC(12,2) NOT NULL,
   overtime_pay          NUMERIC(12,2) NOT NULL,
   double_overtime_pay   NUMERIC(12,2) NOT NULL,
+  weekend_hours         NUMERIC(8,2) NOT NULL DEFAULT 0,
+  weekend_pay           NUMERIC(12,2) NOT NULL DEFAULT 0,
+  stat_hours            NUMERIC(8,2) NOT NULL DEFAULT 0,
+  stat_pay              NUMERIC(12,2) NOT NULL DEFAULT 0,
+  sick_hours            NUMERIC(8,2) NOT NULL DEFAULT 0,
+  sick_pay              NUMERIC(12,2) NOT NULL DEFAULT 0,
+  vacation_leave_hours  NUMERIC(8,2) NOT NULL DEFAULT 0,
   vacation_pay          NUMERIC(12,2) NOT NULL,
   gross_pay             NUMERIC(12,2) NOT NULL,
   cpp                   NUMERIC(12,2) NOT NULL,
@@ -151,7 +180,7 @@ CREATE INDEX paystub_period_idx ON paystub(pay_period_id);
 CREATE TABLE paystub_earning (
   earning_id   INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   paystub_id   INT NOT NULL REFERENCES paystub(paystub_id),
-  line_type    VARCHAR(20) NOT NULL CHECK (line_type IN ('PROJECT','OVERTIME_PREMIUM','VACATION')),
+  line_type    VARCHAR(20) NOT NULL CHECK (line_type IN ('PROJECT','OVERTIME_PREMIUM','WEEKEND_PREMIUM','STAT_PREMIUM','SICK','VACATION')),
   project_id   INT REFERENCES project(project_id),
   project_code INT,
   hours        NUMERIC(8,2) NOT NULL,
