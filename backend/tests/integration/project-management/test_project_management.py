@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-BACKEND = Path(__file__).resolve().parents[2]
+BACKEND = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(BACKEND / "layers" / "python"))
 pg8000 = types.ModuleType("pg8000")
 pg8000.dbapi = types.ModuleType("pg8000.dbapi")

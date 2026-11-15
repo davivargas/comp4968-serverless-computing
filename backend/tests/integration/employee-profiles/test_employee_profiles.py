@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-BACKEND = Path(__file__).resolve().parents[2]
+BACKEND = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(BACKEND / "layers" / "python"))
 # Service dependencies are only used at runtime; all external calls are mocked here.
 sys.modules.setdefault("boto3", types.ModuleType("boto3"))
