@@ -90,3 +90,14 @@ def test_stat_dates_between_reads_the_holiday_table(conn):
     found = payroll.stat_dates_between(conn, datetime.date(2026, 6, 28),
                                        datetime.date(2026, 7, 11))
     assert found == {datetime.date(2026, 7, 1)}
+
+
+def test_load_wages_returns_history_per_position(conn, base):
+    """A Python list works as the ANY(%s) array, and each position's
+    wages come back oldest first."""
+    insert(conn, "position_wage", position_id=base.dev_position,
+           hourly_wage=30, effective_from=day(10), created_by=base.admin)
+    wages = payroll.load_wages(conn, {base.dev_position})
+    history = [(eff, str(w)) for eff, w in wages[base.dev_position]]
+    assert history == [(datetime.date(2000, 1, 1), "25.00"),
+                       (day(10), "30.00")]
