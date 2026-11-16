@@ -83,3 +83,10 @@ def test_sick_dates_used_counts_only_live_sick_days(conn, base):
     log(conn, base, day(3))
     log(conn, base, datetime.date(2025, 12, 30), project=base.sick)
     assert payroll.sick_dates_used(conn, base.ana, 2026) == [day(1)]
+
+
+def test_stat_dates_between_reads_the_holiday_table(conn):
+    """Stat holidays come from the stat_holiday rows schema.sql loads."""
+    found = payroll.stat_dates_between(conn, datetime.date(2026, 6, 28),
+                                       datetime.date(2026, 7, 11))
+    assert found == {datetime.date(2026, 7, 1)}
