@@ -116,3 +116,16 @@ def test_wage_join_picks_the_wage_in_effect(conn, base, on, expected):
                         "WHERE p.position_id = %s",
                   (on, on, base.dev_position))
     assert str(row["hourly_wage"]) == expected
+
+
+def test_wage_join_falls_back_to_the_first_future_wage(conn, base):
+    """Before any wage starts, the earliest upcoming one is shown rather
+    than nothing."""
+    p = insert(conn, "position", title="Intern", pay_grade="G0")
+    for start, wage in ((day(30), 18), (day(60), 20)):
+        insert(conn, "position_wage", position_id=p["position_id"],
+               hourly_wage=wage, effective_from=start, created_by=base.admin)
+    [row] = query(conn, f"SELECT cw.hourly_wage FROM position p {WAGE_JOIN} "
+                        "WHERE p.position_id = %s",
+                  (day(0), day(0), p["position_id"]))
+    assert str(row["hourly_wage"]) == "18.00"
