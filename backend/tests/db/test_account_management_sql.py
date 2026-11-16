@@ -72,3 +72,12 @@ def test_list_users_filters_and_counts(base, query, names, total):
     status, body = call("GET", "/it/users", query=query)
     assert status == 200 and body["total"] == total
     assert [u["firstName"] for u in body["users"]] == names
+
+
+def test_teams_list_counts_members(base):
+    """Each team shows its manager's name and how many people are on
+    it."""
+    status, body = call("GET", "/it/teams")
+    assert body["teams"] == [{"teamId": base.team, "name": "Platform",
+                              "managerId": base.mei, "managerName": "Mei Test",
+                              "memberCount": 1}]
