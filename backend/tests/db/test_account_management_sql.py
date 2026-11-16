@@ -58,3 +58,17 @@ def test_create_account_with_taken_email_is_409(base, cognito):
     body = {**NEW_USER, "email": "ANA@test.com", "positionId": base.dev_position}
     status, _ = call("POST", "/it/create-account", body=body)
     assert status == 409 and cognito.calls == []
+
+
+@pytest.mark.parametrize("query, names, total", [
+    ({"sort": "name", "limit": "2"}, ["Ana", "Ivy"], 3),
+    ({"role": "MANAGER"}, ["Mei"], 1),
+    ({"role": "EMPLOYEE"}, ["Ana"], 1),
+    ({"search": "MEI@"}, ["Mei"], 1),
+])
+def test_list_users_filters_and_counts(base, query, names, total):
+    """Filters, case-insensitive search, sorting and paging run in SQL,
+    and total counts every match, not just the page."""
+    status, body = call("GET", "/it/users", query=query)
+    assert status == 200 and body["total"] == total
+    assert [u["firstName"] for u in body["users"]] == names
