@@ -38,6 +38,7 @@ not instructions to execute requests against a live service.
 | POST | `/manager/projects` | `{ name, projectCode?: number }` | `201 ManagerProject` |
 | PATCH | `/manager/projects/{id}` | Any of `{ name, status, isDeleted: true }` | `ManagerProject`, or `204` for deletion |
 | POST | `/manager/{id}/assign-employee` | Project ID; `{ employeeId }` | `201 { projectId, employeeId, alreadyAssigned: false }`, or `200` with `alreadyAssigned: true` |
+| DELETE | `/manager/{id}/assign-employee/{employeeId}` | Path project ID and employee ID; no body | `204` |
 
 The employee-list client currently exposes only the optional `projectId` filter; the UI displays the returned order.
 The timesheet UI shows one summary per employee for the selected backend pay period. It loads all
@@ -109,7 +110,16 @@ timesheet history references the project; close it instead. Deleted projects are
 Assignments require an ACTIVE project (`409` otherwise), owned by the manager (`403` otherwise),
 and an active employee on a managed team or the manager themself (`400` otherwise).
 Missing/deleted projects return `404`. Repeating an assignment succeeds without duplicating it.
-No unassignment endpoint is specified in the workbook or implemented in this portal.
+The updated **API link(2).xlsx**, row 55, adds assignment removal:
+`DELETE /manager/{id}/assign-employee/{employeeId}`. Only the project creator can remove an
+assignment (`403` otherwise). Missing projects or assignments return `404`; system SICK/VAC/MISC
+projects return `400`. Unlike adding an assignment, removal can also be used on closed projects.
+The backend writes an audit entry and returns `204` with no body.
+
+In Projects → Assignments, each assigned employee has a Remove button and an inline confirmation.
+Successful removal refreshes the membership list and project count. It prevents future time booking;
+existing timesheet entries remain unchanged, eligible for approval, and payable. It does not remove
+the employee's account or team membership. The browser mock also preserves existing timesheet data.
 
 ## Shared shapes
 

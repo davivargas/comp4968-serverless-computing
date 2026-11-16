@@ -33,7 +33,7 @@ Each test cleans up rendered components and resets its API fixtures. There are n
 
 | Suite | Coverage |
 |---|---|
-| `manager/projects.test.tsx` | Create with explicit/generated code; required name; cancel; duplicate-code errors; rename; close/reopen; delete confirmation; active employee assignment; displaying assigned names and count; excluding inactive/already assigned options; authenticated self option; disabling deletion for assigned projects; closed-project guards; error/retry; busy save controls |
+| `manager/projects.test.tsx` | Create with explicit/generated code; required name; cancel; duplicate-code errors; rename; close/reopen; delete confirmation; active employee assignment; displaying assigned names and count; excluding inactive/already assigned options; authenticated self option; disabling deletion for assigned projects; closed-project guards; error/retry; busy save controls; assignment removal confirmation/cancel, membership/count refresh, error recovery, and removal from closed projects |
 | `manager/timesheets.test.tsx` | Per-employee summary hours/days; opening detail by button or row; individual dates/projects; close; employee/status filters; confirm/cancel approval; return for changes; unsubmitted/partial submission guards; review errors; previous/next periods; complete API pagination; load retry |
 | `manager/team.test.tsx` | Signed-in manager ID used for team request; employee names, team, and inactive status |
 | `manager/dashboard.test.tsx` | All three quick-action links navigate to their respective routes |
