@@ -369,6 +369,17 @@ def test_update_profile_position_and_team(db, audits):
     assert audits[0]["new"]["position_id"] == 4
 
 
+def test_update_can_clear_phone_and_team(db):
+    """An empty phone and a null teamId clear those fields; a null team
+    isn't looked up."""
+    db.on("SELECT * FROM employee WHERE employee_id", FULL_OLD)
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                     body={"phone": "", "teamId": None})
+    assert status == 200
+    assert db.params("UPDATE employee SET") == [[None, None, 42]]
+    assert db.ran("FROM team WHERE team_id") == []
+
+
 # ---- status and role -------------------------------------------------
 
 def test_cannot_deactivate_yourself(db):
