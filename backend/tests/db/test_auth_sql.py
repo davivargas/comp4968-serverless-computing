@@ -1,6 +1,10 @@
+import pytest
+
 from helpers.events import api_event
 from payroll_common import auth
 from payroll_common.db import one, query, transaction
+from payroll_common.http_utils import HttpError
+
 """Tests for payroll_common.auth and db.transaction on a real Postgres:
 the sign-in lookup every route runs, and real commits and rollbacks.
 
@@ -29,3 +33,19 @@ def test_authenticate_employee_without_elevated_role(base):
     ctx = signed_in("sub-ana")
     assert ctx["role"] is None and ctx["available"] == ["EMPLOYEE"]
     assert ctx["team_id"] == base.team
+
+
+@pytest.mark.parametrize("sub, change, message", [
+    ("sub-nobody", None, "No employee record"),
+    ("sub-ana", "DEACTIVATED", "deactivated"),
+])
+def test_authenticate_refuses_unknown_or_deactivated(conn, base, sub, change,
+                                                     message):
+    """An unknown sub or a deactivated account is a 403."""
+    if change:
+        query(conn, "UPDATE employee SET status = %s WHERE employee_id = %s",
+              (change, base.ana))
+        conn.commit()
+    with pytest.raises(HttpError) as err:
+        signed_in(sub)
+    assert err.value.status == 403 and message in err.value.message
