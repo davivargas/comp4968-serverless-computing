@@ -244,6 +244,22 @@ def test_seed_db_failure_deletes_cognito_user(conn, cognito):
     assert cognito.users("admin_delete_user") == ["ivy@example.com"]
 
 
+def test_seed_cleanup_failures_keep_the_original_error(conn, cognito,
+                                                       monkeypatch):
+    """Even if the rollback and the Cognito delete both fail too, the
+    caller sees the insert's error, and the delete was still tried."""
+    def lost():
+        raise RuntimeError("connection lost")
+
+    seed_cursor(conn)
+    conn.fail_on("INSERT INTO position_wage", RuntimeError("db down"))
+    monkeypatch.setattr(conn, "rollback", lost)
+    cognito.errors["admin_delete_user"] = RuntimeError("Cognito down")
+    with pytest.raises(RuntimeError, match="db down"):
+        dbi.lambda_handler({"action": "seed", **ADMIN})
+    assert cognito.users("admin_delete_user") == ["ivy@example.com"]
+
+
 def test_special_projects_are_idempotent(conn):
     """Sick, vacation and misc are each inserted only if that kind is
     missing, so re-running can't duplicate them."""
