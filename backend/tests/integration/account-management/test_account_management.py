@@ -566,6 +566,16 @@ def test_update_team_name_and_manager(db, audits):
     assert audits[0]["new"] == {"name": "Platform", "manager_id": 8}
 
 
+def test_update_team_name_taken_is_409(db):
+    """Renaming to another team's name (any case) is a 409, and nothing
+    is written."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("WHERE lower(name)", {"x": 1})
+    status, _ = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                     body={"name": "platform"})
+    assert status == 409 and db.ran("UPDATE team") == []
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
