@@ -7,6 +7,7 @@ import pytest
 from helpers.pg import insert
 from payroll_common import payroll
 from payroll_common.db import one, query
+from payroll_common.http_utils import HttpError
 from payroll_common.release import release_period
 from payroll_common.shapes import PAID_HOURS_SQL
 
@@ -114,3 +115,14 @@ def test_deleted_entries_neither_block_nor_pay(conn, base, ctx):
     pid = period_id(conn, FIRST)
     release_period(conn, pid, ctx)
     assert stub(conn, pid)["regular_hours"] == Decimal("8")
+
+
+def test_unapproved_entry_blocks_release(conn, base, ctx):
+    """One live unapproved entry stops the release with a 409, and no
+    paystub is written."""
+    work(conn, base, FIRST + datetime.timedelta(days=1), approved=False)
+    pid = period_id(conn, FIRST)
+    with pytest.raises(HttpError) as err:
+        release_period(conn, pid, ctx)
+    assert err.value.status == 409 and "1 timesheet entry" in err.value.message
+    assert one(conn, "SELECT count(*)::int AS n FROM paystub")["n"] == 0
