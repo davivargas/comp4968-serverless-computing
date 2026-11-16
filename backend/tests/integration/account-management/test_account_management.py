@@ -33,6 +33,10 @@ USER_ROW = {
 OLD_EMPLOYEE = {"employee_id": 42, "email": "ada@example.com",
                 "position_id": 3, "team_id": 2, "cognito_sub": "sub-ada",
                 "first_name": "Ada", "last_name": "Lovelace"}
+FULL_OLD = {**OLD_EMPLOYEE, "phone": None, "street": None, "city": None,
+            "province": None, "postal_code": None, "country": None}
+ADDRESS = {"street": "123 Main St", "city": "Vancouver", "province": "bc",
+           "postalCode": "v6b1a1", "country": "ca"}
 ACTIVE_LOGIN = {"status": "ACTIVE", "cognito_sub": "sub-ada"}
 TEAM_ROW = {"team_id": 9, "name": "Ops", "manager_id": 7,
             "manager_name": "Mei Ross", "member_count": 0}
@@ -345,6 +349,24 @@ def test_update_unknown_user_is_404(db):
     status, _ = call("PATCH", "/it/users/{id}", path={"id": "999"},
                      body={"firstName": "Ada"})
     assert status == 404
+
+
+def test_update_profile_position_and_team(db, audits):
+    """Name, phone, address, position and team are cleaned up, written
+    in one UPDATE, and the new position and team are checked to exist."""
+    db.on("SELECT * FROM employee WHERE employee_id", FULL_OLD)
+    body = {"lastName": " Byron ", "phone": "+16045550142",
+            "address": ADDRESS, "positionId": 4, "teamId": 5}
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"}, body=body)
+    assert status == 200
+    assert db.params("UPDATE employee SET") == [[
+        "Byron", "+16045550142", "123 Main St", "Vancouver", "BC",
+        "V6B 1A1", "CA", 4, 5, 42,
+    ]]
+    assert db.params("FROM position WHERE position_id") == [(4,)]
+    assert db.params("FROM team WHERE team_id") == [(5,)]
+    assert audits[0]["old"]["position_id"] == 3
+    assert audits[0]["new"]["position_id"] == 4
 
 
 # ---- status and role -------------------------------------------------
