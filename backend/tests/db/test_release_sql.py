@@ -19,6 +19,7 @@ end, so releases don't depend on the real date.
 """
 
 FIRST = datetime.date(2026, 1, 4)
+SECOND = datetime.date(2026, 1, 18)
 NINE, FIVE = datetime.time(9, 0), datetime.time(17, 0)
 
 
@@ -89,3 +90,15 @@ def test_paid_hours_sql_adds_up_a_real_paystub(conn, base, ctx):
     release_period(conn, pid, ctx)
     row = one(conn, f"SELECT {PAID_HOURS_SQL} AS hours FROM paystub ps")
     assert row["hours"] == Decimal("8")
+
+
+def test_year_to_date_adds_earlier_periods(conn, base, ctx):
+    """The 2nd period's stub carries the 1st period's pay in its
+    year-to-date totals."""
+    work(conn, base, FIRST + datetime.timedelta(days=1))
+    work(conn, base, SECOND + datetime.timedelta(days=1))
+    first, second = period_id(conn, FIRST), period_id(conn, SECOND)
+    release_period(conn, first, ctx)
+    release_period(conn, second, ctx)
+    s = stub(conn, second)
+    assert s["ytd_gross"] == Decimal("400") and s["ytd_hours"] == Decimal("16")
