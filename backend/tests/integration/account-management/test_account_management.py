@@ -380,6 +380,17 @@ def test_update_can_clear_phone_and_team(db):
     assert db.ran("FROM team WHERE team_id") == []
 
 
+def test_update_same_position_and_team_skip_checks(db):
+    """Re-sending the current position and team doesn't look them up
+    again; only real changes are checked."""
+    db.on("SELECT * FROM employee WHERE employee_id", OLD_EMPLOYEE)
+    db.on("FROM position WHERE position_id", None)
+    db.on("FROM team WHERE team_id", None)
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                     body={"positionId": 3, "teamId": 2})
+    assert status == 200
+
+
 # ---- status and role -------------------------------------------------
 
 def test_cannot_deactivate_yourself(db):
