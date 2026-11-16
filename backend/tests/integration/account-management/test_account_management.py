@@ -467,6 +467,18 @@ def test_role_is_required(db):
     assert status == 400 and "role is required" in body["error"]
 
 
+@pytest.mark.parametrize("route, body", [
+    (STATUS_ROUTE, {"status": "DEACTIVATED"}),
+    (ROLE_ROUTE, {"role": "IT"}),
+])
+def test_status_or_role_of_unknown_user_is_404(db, cognito, route, body):
+    """An id with no employee row is a 404, with no Cognito call and
+    nothing written."""
+    status, _ = call("PATCH", route, path={"id": "999"}, body=body)
+    assert status == 404 and cognito.calls == []
+    assert db.ran("UPDATE employee") == []
+
+
 def test_demoting_a_team_manager_is_409(db, audits):
     """Someone who still manages a team can't lose the MANAGER role
     until the team gets another manager."""
