@@ -1,0 +1,79 @@
+import datetime
+import json
+from decimal import Decimal
+
+import pytest
+
+from helpers.pg import insert
+from payroll_common import payroll
+from payroll_common.db import one, query
+from payroll_common.release import release_period
+"""Tests for payroll_common.release on a real Postgres: a finished pay
+period's approved hours become paystub and earning rows.
+
+Approach: Ana ($25/h) logs hours in committed rows, then release_period
+runs every real query and INSERT. "Today" is fixed after the periods
+end, so releases don't depend on the real date.
+"""
+
+FIRST = datetime.date(2026, 1, 4)
+NINE, FIVE = datetime.time(9, 0), datetime.time(17, 0)
+
+
+@pytest.fixture(autouse=True)
+def after_the_periods(monkeypatch):
+    """Pins today (BC) to a date after every period these tests use."""
+    monkeypatch.setattr(payroll, "today_bc", lambda: datetime.date(2026, 6, 1))
+
+
+@pytest.fixture
+def ctx(base):
+    """The releasing payroll user: the IT admin from base."""
+    return {"employee_id": base.admin, "name": "Ivy Test"}
+
+
+def work(conn, base, d, project=None, approved=True, deleted=False):
+    """One 8h entry for Ana, submitted and (by default) approved."""
+    insert(conn, "timesheet_entry", employee_id=base.ana,
+           project_id=project or base.project, work_date=d,
+           start_time=NINE, end_time=FIVE, submitted=True, approved=approved,
+           is_deleted=deleted)
+
+
+def period_id(conn, start):
+    """Creates the periods up to start and returns that period's id."""
+    payroll.ensure_periods(conn, start)
+    row = one(conn, "SELECT pay_period_id FROM pay_period WHERE start_date = %s",
+              (start,))
+    return row["pay_period_id"]
+
+
+def stub(conn, pid):
+    """Ana's paystub for one period."""
+    return one(conn, "SELECT * FROM paystub WHERE pay_period_id = %s", (pid,))
+
+
+def test_release_writes_paystub_lines_and_closes_period(conn, base, ctx,
+                                                       audits):
+    """An approved 8h day becomes a $200 paystub with the name, title
+    and account digits copied in, one PROJECT line, and a closed
+    period."""
+    insert(conn, "direct_deposit", employee_id=base.ana, institution_no="004",
+           transit_no="12345", account_no="1234567", account_last4="4567")
+    work(conn, base, FIRST + datetime.timedelta(days=1))
+    pid = period_id(conn, FIRST)
+    result = release_period(conn, pid, ctx)
+    s = stub(conn, pid)
+    assert result["paystubsCreated"] == 1
+    assert s["employee_name"] == "Ana Test" and s["position_title"] == "Developer"
+    assert s["deposit_account_last4"] == "4567"
+    assert s["regular_hours"] == Decimal("8") and s["gross_pay"] == Decimal("200")
+    lines = query(conn, "SELECT line_type, project_code, hours, amount "
+                        "FROM paystub_earning WHERE paystub_id = %s",
+                  (s["paystub_id"],))
+    assert [tuple(ln.values()) for ln in lines] == [
+        ("PROJECT", 1001, Decimal("8"), Decimal("200"))]
+    period = one(conn, "SELECT * FROM pay_period WHERE pay_period_id = %s", (pid,))
+    assert period["status"] == "RELEASED" and period["released_by"] == base.admin
+    assert period["released_at"] is not None
+    assert [json.loads(m)["table"] for m in audits] == ["paystub", "pay_period"]
