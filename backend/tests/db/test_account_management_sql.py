@@ -116,3 +116,10 @@ def test_manager_with_active_team_cannot_be_deactivated(conn, base, cognito):
               (base.mei,))
     assert row["status"] == "DEACTIVATED"
     assert cognito.users("admin_disable_user") == ["sub-ana", "sub-mei"]
+
+
+def test_team_manager_keeps_manager_role(base):
+    """Removing Mei's MANAGER role is refused while she runs a team."""
+    status, _ = call("PATCH", "/it/users/{id}/role", path={"id": str(base.mei)},
+                     body={"role": None})
+    assert status == 409
