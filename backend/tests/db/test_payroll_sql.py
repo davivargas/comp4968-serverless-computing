@@ -30,3 +30,12 @@ def test_ensure_periods_creates_back_to_back_periods(conn):
     assert rows[0]["end_date"] == day(13)
     assert rows[0]["pay_date"] == day(19)
     assert {r["status"] for r in rows} == {"OPEN"}
+
+
+def test_ensure_periods_is_safe_to_repeat(conn):
+    """Running it again (every Lambda call does) adds only the missing
+    periods; ON CONFLICT skips the existing ones."""
+    payroll.ensure_periods(conn, day(20))
+    payroll.ensure_periods(conn, day(40))
+    rows = query(conn, "SELECT start_date FROM pay_period")
+    assert sorted(r["start_date"] for r in rows) == [day(0), day(14), day(28)]
