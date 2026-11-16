@@ -166,6 +166,16 @@ def test_create_account_with_elevated_role(db):
     assert status == 201 and params[10] == 2
 
 
+def test_create_account_checks_and_stores_team(db):
+    """A teamId is checked against live teams and saved on the new
+    employee row."""
+    body = {**VALID_ACCOUNT, "teamId": 2}
+    status, _ = call("POST", "/it/create-account", body=body)
+    [(_, params)] = db.ran("INSERT INTO employee")
+    assert status == 201 and params[12] == 2
+    assert db.params("FROM team WHERE team_id") == [(2,)]
+
+
 @pytest.mark.parametrize("change", [
     {"firstName": ""},
     {"email": "not-an-email"},
