@@ -202,3 +202,11 @@ def test_sqs_sends_in_batches_of_ten(sqs):
     url, first = sqs["batches"][0]
     assert [e["Id"] for e in first] == [str(n) for n in range(10)]
     assert json.loads(first[0]["MessageBody"])["recordId"] == "0"
+
+
+def test_sqs_partial_rejection_raises(sqs):
+    """If SQS rejects some messages in a batch, sending raises instead
+    of reporting success and losing those entries."""
+    sqs["reply"] = {"Failed": [{"Id": "0", "Code": "InternalError"}]}
+    with pytest.raises(RuntimeError, match="SQS rejected 1 audit message"):
+        audit(None, CTX, "team", 1, "INSERT", None, {})
