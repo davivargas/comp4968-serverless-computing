@@ -133,6 +133,15 @@ def test_cognito_client_is_created_once(monkeypatch):
     assert made == ["cognito-idp"]
 
 
+def test_missing_user_pool_id_is_500(monkeypatch, db, cognito):
+    """A deploy without USER_POOL_ID fails with a generic 500 before any
+    Cognito call, rather than calling an undefined pool."""
+    monkeypatch.delenv("USER_POOL_ID")
+    status, res = call("POST", "/it/create-account", body=VALID_ACCOUNT)
+    assert status == 500 and "USER_POOL_ID" not in res["error"]
+    assert cognito.calls == [] and db.ran("INSERT INTO employee") == []
+
+
 # ---- create account --------------------------------------------------
 
 def test_create_account_success(db, cognito, audits):
