@@ -50,3 +50,11 @@ def test_create_account_then_read_it_back(base):
     assert user["position"] == "Developer" and user["team"] == "Platform"
     assert user["managerName"] == "Mei Test"
     assert user["hireDate"] == "2026-03-02"
+
+
+def test_create_account_with_taken_email_is_409(base, cognito):
+    """The duplicate check finds an existing email whatever its case,
+    before any Cognito user is made."""
+    body = {**NEW_USER, "email": "ANA@test.com", "positionId": base.dev_position}
+    status, _ = call("POST", "/it/create-account", body=body)
+    assert status == 409 and cognito.calls == []
