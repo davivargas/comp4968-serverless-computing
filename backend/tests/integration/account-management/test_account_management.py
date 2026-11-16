@@ -551,6 +551,21 @@ def test_create_team_unknown_manager_is_400(db):
     assert db.ran("INSERT INTO team") == []
 
 
+def test_update_team_name_and_manager(db, audits):
+    """A rename is only checked against other teams, the new manager
+    must hold the MANAGER role, and the change is audited."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("SELECT r.name AS role", {"role": "MANAGER"})
+    db.on("WHERE t.team_id", {**TEAM_ROW, "name": "Platform", "manager_id": 8})
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                       body={"name": " Platform ", "managerId": 8})
+    assert status == 200 and res["name"] == "Platform"
+    assert db.params("WHERE lower(name)") == [("Platform", 9)]
+    assert db.params("UPDATE team SET") == [["Platform", 8, 9]]
+    assert audits[0]["old"] == {"name": "Ops", "manager_id": 7}
+    assert audits[0]["new"] == {"name": "Platform", "manager_id": 8}
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
