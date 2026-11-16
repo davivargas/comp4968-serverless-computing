@@ -1,8 +1,12 @@
+import json
+
 import pytest
 
 from helpers.events import api_event
+from helpers.pg import insert
 from payroll_common import auth
 from payroll_common.db import one, query, transaction
+from payroll_common.audit import audit
 from payroll_common.http_utils import HttpError
 
 """Tests for payroll_common.auth and db.transaction on a real Postgres:
@@ -49,3 +53,15 @@ def test_authenticate_refuses_unknown_or_deactivated(conn, base, sub, change,
     with pytest.raises(HttpError) as err:
         signed_in(sub)
     assert err.value.status == 403 and message in err.value.message
+
+
+def test_transaction_commits_and_then_sends_audits(conn, base, audits):
+    """Rows written in transaction() survive a later rollback, and the
+    audit message is sent only after the commit."""
+    with transaction() as c:
+        row = insert(c, "position", title="Analyst", pay_grade="G2")
+        audit(c, None, "position", row["position_id"], "INSERT", None, {})
+        assert audits == []
+    conn.rollback()
+    assert one(conn, "SELECT 1 AS x FROM position WHERE title = 'Analyst'")
+    assert [json.loads(m)["table"] for m in audits] == ["position"]
