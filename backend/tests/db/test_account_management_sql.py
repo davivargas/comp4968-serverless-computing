@@ -98,3 +98,21 @@ def test_team_rules_hold_against_real_rows(base):
     assert status == 204
     status, body = call("GET", "/it/teams")
     assert body["teams"] == []
+
+
+def test_manager_with_active_team_cannot_be_deactivated(conn, base, cognito):
+    """Mei still has an active member, so deactivating her is refused
+    by name; after Ana is deactivated it goes through."""
+    route = "/it/users/{id}/status"
+    status, body = call("PATCH", route, path={"id": str(base.mei)},
+                        body={"status": "DEACTIVATED"})
+    assert status == 409 and body["details"] == {"teams": ["Platform"]}
+    call("PATCH", route, path={"id": str(base.ana)},
+         body={"status": "DEACTIVATED"})
+    status, _ = call("PATCH", route, path={"id": str(base.mei)},
+                     body={"status": "DEACTIVATED"})
+    assert status == 200
+    row = one(conn, "SELECT status FROM employee WHERE employee_id = %s",
+              (base.mei,))
+    assert row["status"] == "DEACTIVATED"
+    assert cognito.users("admin_disable_user") == ["sub-ana", "sub-mei"]
