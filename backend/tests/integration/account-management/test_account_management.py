@@ -176,6 +176,17 @@ def test_create_account_checks_and_stores_team(db):
     assert db.params("FROM team WHERE team_id") == [(2,)]
 
 
+def test_create_account_unknown_team_deletes_cognito_user(db, cognito):
+    """An unknown or deleted team is a 400, and the Cognito user made a
+    moment earlier is removed again."""
+    db.on("FROM team WHERE team_id", None)
+    body = {**VALID_ACCOUNT, "teamId": 2}
+    status, res = call("POST", "/it/create-account", body=body)
+    assert status == 400 and "teamId 2 does not exist" in res["error"]
+    assert cognito.names() == ["admin_create_user", "admin_delete_user"]
+    assert db.ran("INSERT INTO employee") == []
+
+
 @pytest.mark.parametrize("change", [
     {"firstName": ""},
     {"email": "not-an-email"},
