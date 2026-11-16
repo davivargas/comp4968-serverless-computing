@@ -9,7 +9,7 @@ import { people, projects, renderManager } from './fixtures'
 
 vi.mock('@/lib/manager/api', () => ({ managerApi: {
   listEmployees: vi.fn(), listProjects: vi.fn(), createProject: vi.fn(), updateProject: vi.fn(),
-  projectEmployees: vi.fn(), assignEmployee: vi.fn(),
+  projectEmployees: vi.fn(), assignEmployee: vi.fn(), removeEmployee: vi.fn(),
 } }))
 
 let state: ManagerProject[]
@@ -182,4 +182,70 @@ test('saving disables repeat submissions until the API responds', async () => {
   finish(state[2])
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(screen.getByText('Slow project')).toBeVisible()
+})
+
+function existingAssignment() {
+  state[0].employeeCount = 1
+  vi.mocked(managerApi.projectEmployees).mockResolvedValue({ projectId: '8', projectCode: 1008, employees: [people[0]] })
+}
+
+test('removing an assignment requires confirmation and cancel leaves membership unchanged', async () => {
+  existingAssignment()
+  const user = await openProjects()
+  await user.click(within(projectRow()).getByRole('button', { name: 'Assignments' }))
+  const dialog = screen.getByRole('dialog')
+  await user.click(await within(dialog).findByRole('button', { name: 'Remove Juan Pablo from project' }))
+  expect(within(dialog).getByText(/Existing timesheets stay valid/)).toBeVisible()
+  expect(managerApi.removeEmployee).not.toHaveBeenCalled()
+  expect(within(dialog).getByLabelText('Assign employee')).toBeDisabled()
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel removal' }))
+  expect(within(dialog).getByText('Juan Pablo')).toBeVisible()
+  expect(within(dialog).queryByRole('button', { name: 'Confirm removal' })).not.toBeInTheDocument()
+  expect(managerApi.removeEmployee).not.toHaveBeenCalled()
+})
+
+test('confirmed removal refreshes membership, count, and available assignment choices', async () => {
+  existingAssignment()
+  vi.mocked(managerApi.removeEmployee).mockImplementation(async () => {
+    state[0].employeeCount = 0
+    vi.mocked(managerApi.projectEmployees).mockResolvedValue({ projectId: '8', projectCode: 1008, employees: [] })
+  })
+  const user = await openProjects()
+  await user.click(within(projectRow()).getByRole('button', { name: 'Assignments' }))
+  const dialog = screen.getByRole('dialog')
+  await user.click(await within(dialog).findByRole('button', { name: 'Remove Juan Pablo from project' }))
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm removal' }))
+  expect(await within(dialog).findByText('No employees assigned.')).toBeVisible()
+  expect(managerApi.removeEmployee).toHaveBeenCalledExactlyOnceWith('8', '51')
+  expect(within(dialog).getByRole('option', { name: 'Juan Pablo' })).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(within(projectRow()).getByRole('cell', { name: '0' })).toBeVisible()
+  expect(within(projectRow()).getByRole('button', { name: 'Delete' })).toBeEnabled()
+})
+
+test('removal error keeps the employee assigned and permits retry', async () => {
+  existingAssignment()
+  vi.mocked(managerApi.removeEmployee).mockRejectedValue(new Error('You can only remove employees from projects you created'))
+  const user = await openProjects()
+  await user.click(within(projectRow()).getByRole('button', { name: 'Assignments' }))
+  const dialog = screen.getByRole('dialog')
+  await user.click(await within(dialog).findByRole('button', { name: 'Remove Juan Pablo from project' }))
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm removal' }))
+  expect(await screen.findByText('You can only remove employees from projects you created')).toBeVisible()
+  expect(within(dialog).getByText('Juan Pablo')).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: 'Confirm removal' })).toBeEnabled()
+  expect(within(dialog).queryByRole('option', { name: 'Juan Pablo' })).not.toBeInTheDocument()
+})
+
+test('closed projects still allow removing an existing assignment', async () => {
+  existingAssignment()
+  state[0].status = 'CLOSED'
+  const user = await openProjects()
+  await user.click(within(projectRow()).getByRole('button', { name: 'Assignments' }))
+  const dialog = screen.getByRole('dialog')
+  const remove = await within(dialog).findByRole('button', { name: 'Remove Juan Pablo from project' })
+  expect(remove).toBeEnabled()
+  await user.click(remove)
+  expect(within(dialog).getByRole('button', { name: 'Confirm removal' })).toBeEnabled()
+  expect(within(dialog).getByRole('button', { name: 'Assign employee' })).toBeDisabled()
 })
