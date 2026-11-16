@@ -101,3 +101,18 @@ def test_load_wages_returns_history_per_position(conn, base):
     history = [(eff, str(w)) for eff, w in wages[base.dev_position]]
     assert history == [(datetime.date(2000, 1, 1), "25.00"),
                        (day(10), "30.00")]
+
+
+@pytest.mark.parametrize("on, expected", [
+    (day(9), "25.00"),
+    (day(10), "30.00"),
+])
+def test_wage_join_picks_the_wage_in_effect(conn, base, on, expected):
+    """WAGE_JOIN shows the wage in effect on a date, switching on the
+    day a raise starts."""
+    insert(conn, "position_wage", position_id=base.dev_position,
+           hourly_wage=30, effective_from=day(10), created_by=base.admin)
+    [row] = query(conn, f"SELECT cw.hourly_wage FROM position p {WAGE_JOIN} "
+                        "WHERE p.position_id = %s",
+                  (on, on, base.dev_position))
+    assert str(row["hourly_wage"]) == expected
