@@ -8,6 +8,8 @@ from helpers.pg import insert
 from payroll_common import payroll
 from payroll_common.db import one, query
 from payroll_common.release import release_period
+from payroll_common.shapes import PAID_HOURS_SQL
+
 """Tests for payroll_common.release on a real Postgres: a finished pay
 period's approved hours become paystub and earning rows.
 
@@ -77,3 +79,13 @@ def test_release_writes_paystub_lines_and_closes_period(conn, base, ctx,
     assert period["status"] == "RELEASED" and period["released_by"] == base.admin
     assert period["released_at"] is not None
     assert [json.loads(m)["table"] for m in audits] == ["paystub", "pay_period"]
+
+
+def test_paid_hours_sql_adds_up_a_real_paystub(conn, base, ctx):
+    """PAID_HOURS_SQL runs against the paystub table and gives the hours
+    actually paid."""
+    work(conn, base, FIRST + datetime.timedelta(days=1))
+    pid = period_id(conn, FIRST)
+    release_period(conn, pid, ctx)
+    row = one(conn, f"SELECT {PAID_HOURS_SQL} AS hours FROM paystub ps")
+    assert row["hours"] == Decimal("8")
