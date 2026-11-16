@@ -1,3 +1,4 @@
+import csv
 import datetime
 import json
 
@@ -19,6 +20,8 @@ the demo releases the same pay periods whatever the real date is.
 dbi = load_lambda("db-init")
 
 MANIFEST = json.loads((DB_DIR / "demo_manifest.json").read_text("utf-8"))
+with open(DB_DIR / "demo_timesheets.csv", encoding="utf-8", newline="") as f:
+    CSV_ROWS = sum(1 for _ in csv.DictReader(f))
 ADMIN = {"email": "ivy@example.com", "firstName": "Ivy", "lastName": "Tran"}
 TODAY = datetime.date.fromisoformat(MANIFEST["release_before"])
 
@@ -32,6 +35,10 @@ def setup(monkeypatch):
     monkeypatch.setattr(dbi, "__file__", str(DB_DIR / "lambda_function.py"))
     monkeypatch.setattr(payroll, "today_bc", lambda: TODAY)
     return fake
+
+
+def count(conn, sql):
+    return one(conn, f"SELECT count(*)::int AS n FROM {sql}")["n"]
 
 
 def test_schema_action_loads_schema_once(empty_conn):
@@ -55,3 +62,21 @@ def test_seed_creates_the_first_admin_for_real(conn):
     kinds = query(conn, "SELECT special_type FROM project ORDER BY project_code")
     assert [r["special_type"] for r in kinds] == ["SICK", "VAC", "MISC"]
     assert dbi.lambda_handler({"action": "seed", **ADMIN})["ok"] is False
+
+
+def test_demo_loads_every_file_and_releases_periods(conn, setup):
+    """demo_data.sql and all CSV rows load, every demo person gets a
+    login, and past periods are released with real paystubs."""
+    dbi.lambda_handler({"action": "seed", **ADMIN})
+    result = dbi.lambda_handler({"action": "demo"})
+    assert result["ok"], result["message"]
+    assert result["employees"] == len(MANIFEST["emails"])
+    assert result["csvTimesheetRows"] == CSV_ROWS
+    assert count(conn, "timesheet_entry") == CSV_ROWS
+    released = count(conn, "pay_period WHERE status = 'RELEASED'")
+    assert released == result["releasedPayPeriods"] > 0
+    assert result["pay_stubs"] == count(conn, "paystub") > 0
+    assert sorted(setup.users("admin_set_user_password")) == sorted(
+        MANIFEST["emails"])
+    assert count(conn, "employee WHERE cognito_sub LIKE 'sub-%@test.com'") \
+        == len(MANIFEST["emails"])
