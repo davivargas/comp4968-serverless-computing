@@ -40,6 +40,27 @@ async function openProjects() {
 }
 const projectRow = (name = 'Assignment Testing') => screen.getByRole('row', { name: new RegExp(name) })
 
+test.each([51, '51'])('excludes existing assignments with API employee ID %s', async assignedId => {
+  // JSON reproduces backend wire data: deployed IDs can be numeric despite older TS types.
+  vi.mocked(managerApi.projectEmployees).mockResolvedValue(JSON.parse(JSON.stringify({
+    projectId: '8', projectCode: 1008,
+    employees: [
+      { ...people[0], employeeId: assignedId },
+      { employeeId: 42, firstName: 'Kevin', lastName: 'Romero', status: 'ACTIVE' },
+    ],
+  })))
+  const user = await openProjects()
+  await user.click(within(projectRow()).getByRole('button', { name: 'Assignments' }))
+  const dialog = screen.getByRole('dialog')
+  expect(await within(dialog).findByText('Juan Pablo')).toBeVisible()
+  expect(within(dialog).getByText('Kevin Romero')).toBeVisible()
+  const dropdown = within(dialog).getByLabelText('Assign employee')
+  expect(within(dropdown).queryByRole('option', { name: 'Juan Pablo' })).not.toBeInTheDocument()
+  expect(within(dropdown).queryByRole('option', { name: 'Kevin Romero' })).not.toBeInTheDocument()
+  expect(within(dropdown).getByRole('option', { name: 'Maria Sanchez' })).toBeInTheDocument()
+  expect(managerApi.assignEmployee).not.toHaveBeenCalled()
+})
+
 test('create button validates a name and creates a project with a chosen code', async () => {
   const user = await openProjects()
   await user.click(screen.getByRole('button', { name: 'Create project' }))
