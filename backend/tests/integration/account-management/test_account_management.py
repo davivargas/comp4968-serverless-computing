@@ -391,6 +391,19 @@ def test_update_same_position_and_team_skip_checks(db):
     assert status == 200
 
 
+@pytest.mark.parametrize("field", ["positionId", "teamId"])
+def test_update_to_unknown_position_or_team_is_400(db, field):
+    """Moving someone to a position or team that doesn't exist is a 400
+    naming the field, and nothing is written."""
+    db.on("SELECT * FROM employee WHERE employee_id", OLD_EMPLOYEE)
+    db.on("FROM position WHERE position_id", None)
+    db.on("FROM team WHERE team_id", None)
+    status, res = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                       body={field: 99})
+    assert status == 400 and f"{field} 99 does not exist" in res["error"]
+    assert db.ran("UPDATE employee") == [] and db.rollbacks == 1
+
+
 # ---- status and role -------------------------------------------------
 
 def test_cannot_deactivate_yourself(db):
