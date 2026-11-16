@@ -281,6 +281,7 @@ def test_address_accepts_us_zip_plus_four():
     ({"country": "MX"}, "address.country"),
     ({"province": "XX"}, "address.province"),
     ({"postalCode": "12345"}, "address.postalCode"),
+    ({"country": "US", "province": "WA"}, "address.postalCode"),
     ({"street": ""}, "address.street"),
 ])
 def test_address_rejects_invalid_field(change, field):
