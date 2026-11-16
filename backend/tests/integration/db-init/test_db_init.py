@@ -141,6 +141,17 @@ def test_steps_need_the_schema_first(conn, cognito, event):
     assert conn.executed == [] and cognito.calls == []
 
 
+def test_cognito_client_is_created_once(monkeypatch):
+    """The boto3 client is built on first use, then reused by later
+    calls in the same warm Lambda."""
+    made = []
+    monkeypatch.setattr(dbi, "_cognito", None)
+    monkeypatch.setattr(dbi.boto3, "client",
+                        lambda name: made.append(name) or object())
+    assert dbi.cognito() is dbi.cognito()
+    assert made == ["cognito-idp"]
+
+
 # ---- schema ----------------------------------------------------------
 
 def test_schema_runs_schema_sql_and_commits(conn):
