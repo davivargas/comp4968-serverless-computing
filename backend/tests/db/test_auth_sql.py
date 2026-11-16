@@ -65,3 +65,15 @@ def test_transaction_commits_and_then_sends_audits(conn, base, audits):
     conn.rollback()
     assert one(conn, "SELECT 1 AS x FROM position WHERE title = 'Analyst'")
     assert [json.loads(m)["table"] for m in audits] == ["position"]
+
+
+def test_transaction_rolls_back_on_error(conn, base, audits):
+    """An error inside transaction() undoes its writes and drops its
+    audit messages."""
+    with pytest.raises(RuntimeError):
+        with transaction() as c:
+            row = insert(c, "position", title="Analyst", pay_grade="G2")
+            audit(c, None, "position", row["position_id"], "INSERT", None, {})
+            raise RuntimeError("boom")
+    assert one(conn, "SELECT 1 AS x FROM position WHERE title = 'Analyst'") is None
+    assert audits == []
