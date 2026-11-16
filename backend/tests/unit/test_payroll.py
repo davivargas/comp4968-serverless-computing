@@ -247,6 +247,15 @@ def test_paystub_sick_time_is_straight_and_never_overtime():
     assert s["gross_pay"] == 300.0
 
 
+def test_paystub_sick_only_period_has_no_project_lines():
+    """A period with only sick time pays it on one SICK line and adds
+    no empty PROJECT lines."""
+    s = stub([entry(MON, 480, kind="SICK", project=(9, "SICK"))])
+    assert [ln["line_type"] for ln in s["earnings"]] == ["SICK"]
+    assert s["earnings"][0]["amount"] == 200.0
+    assert s["gross_pay"] == 200.0
+
+
 def test_paystub_vacation_pay_and_leave():
     """4% vacation pay is added on top of earned pay; vacation leave
     hours are reported but not paid as extra hours."""

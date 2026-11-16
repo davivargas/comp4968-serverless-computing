@@ -96,7 +96,7 @@ Resources:
       CidrBlock: !Ref VpcCidr
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-vpc"}]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-vpc" }]
 
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
@@ -105,7 +105,7 @@ Resources:
       CidrBlock: !Ref PrivateSubnetACidr
       AvailabilityZone: !Select [0, !GetAZs ""]
       MapPublicIpOnLaunch: false
-      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-a"}]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-private-a" }]
 
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
@@ -114,21 +114,23 @@ Resources:
       CidrBlock: !Ref PrivateSubnetBCidr
       AvailabilityZone: !Select [1, !GetAZs ""]
       MapPublicIpOnLaunch: false
-      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-b"}]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-private-b" }]
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref Vpc
-      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private"}]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-private" }]
 
   PrivateSubnetARouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable}
+    Properties:
+      { SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable }
 
   PrivateSubnetBRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable}
+    Properties:
+      { SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable }
 
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -142,7 +144,13 @@ Resources:
       GroupDescription: PostgreSQL, reachable only from the Lambda security group
       VpcId: !Ref Vpc
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref LambdaSecurityGroup, Description: Lambda functions}
+        - {
+            IpProtocol: tcp,
+            FromPort: 5432,
+            ToPort: 5432,
+            SourceSecurityGroupId: !Ref LambdaSecurityGroup,
+            Description: Lambda functions,
+          }
 
   EndpointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -150,8 +158,13 @@ Resources:
       GroupDescription: VPC interface endpoints, reachable only from the Lambda security group
       VpcId: !Ref Vpc
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref LambdaSecurityGroup, Description: Lambda functions}
-
+        - {
+            IpProtocol: tcp,
+            FromPort: 443,
+            ToPort: 443,
+            SourceSecurityGroupId: !Ref LambdaSecurityGroup,
+            Description: Lambda functions,
+          }
 
   SecretsManagerEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -161,7 +174,12 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.secretsmanager"
       PrivateDnsEnabled: true
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
-      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
 
   KmsEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -171,7 +189,12 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.kms"
       PrivateDnsEnabled: true
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
-      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
 
   SqsEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -181,7 +204,12 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.sqs"
       PrivateDnsEnabled: true
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
-      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
 
   CognitoIdpEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -191,7 +219,12 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.cognito-idp"
       PrivateDnsEnabled: true
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
-      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
 
   DynamoDbGatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -260,7 +293,8 @@ Resources:
         Statement:
           - Sid: AccountAdministration
             Effect: Allow
-            Principal: {AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}
+            Principal:
+              { AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" }
             Action: "kms:*"
             Resource: "*"
 
@@ -291,12 +325,12 @@ Resources:
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - {AttributeName: month, AttributeType: S}
-        - {AttributeName: sk, AttributeType: S}
+        - { AttributeName: month, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
       KeySchema:
-        - {AttributeName: month, KeyType: HASH}
-        - {AttributeName: sk, KeyType: RANGE}
-      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+        - { AttributeName: month, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
       DeletionProtectionEnabled: !If [Protect, true, false]
 
   # ---------------------------------------------------------------- sign-in
@@ -323,13 +357,18 @@ Resources:
           TemporaryPasswordValidityDays: 7
       AccountRecoverySetting:
         RecoveryMechanisms:
-          - {Name: verified_email, Priority: 1}
+          - { Name: verified_email, Priority: 1 }
       EmailConfiguration: !If
         - UseSes
-        - {EmailSendingAccount: DEVELOPER, SourceArn: !Ref SesSourceArn}
-        - {EmailSendingAccount: COGNITO_DEFAULT}
+        - { EmailSendingAccount: DEVELOPER, SourceArn: !Ref SesSourceArn }
+        - { EmailSendingAccount: COGNITO_DEFAULT }
       Schema:
-        - {Name: email, AttributeDataType: String, Required: true, Mutable: true}
+        - {
+            Name: email,
+            AttributeDataType: String,
+            Required: true,
+            Mutable: true,
+          }
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -337,27 +376,32 @@ Resources:
       UserPoolId: !Ref UserPool
       ClientName: web-app
       GenerateSecret: false
-      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_ADMIN_USER_PASSWORD_AUTH]   # the last one lets you get a test token from the CLI (needs AWS credentials)
+      ExplicitAuthFlows: [
+          ALLOW_USER_SRP_AUTH,
+          ALLOW_REFRESH_TOKEN_AUTH,
+          ALLOW_ADMIN_USER_PASSWORD_AUTH,
+        ] # the last one lets you get a test token from the CLI (needs AWS credentials)
       PreventUserExistenceErrors: ENABLED
       SupportedIdentityProviders: [COGNITO]
       AccessTokenValidity: 60
       IdTokenValidity: 60
       RefreshTokenValidity: 12
-      TokenValidityUnits: {AccessToken: minutes, IdToken: minutes, RefreshToken: hours}
+      TokenValidityUnits:
+        { AccessToken: minutes, IdToken: minutes, RefreshToken: hours }
 
   # ---------------------------------------------------------------- API
   Api:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
-      EndpointConfiguration: {Type: REGIONAL}
+      EndpointConfiguration: { Type: REGIONAL }
       Auth:
         DefaultAuthorizer: CognitoAuthorizer
         AddDefaultAuthorizerToCorsPreflight: false
         Authorizers:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt UserPool.Arn
-            Identity: {Header: Authorization}
+            Identity: { Header: Authorization }
       Cors:
         AllowOrigin: !Sub "'${CorsOrigin}'"
         AllowHeaders: "'Content-Type,Authorization,X-Active-Role'"
@@ -372,7 +416,13 @@ Resources:
             Headers:
               Access-Control-Allow-Origin: !Sub "'${CorsOrigin}'"
       MethodSettings:
-        - {ResourcePath: "/*", HttpMethod: "*", MetricsEnabled: true, ThrottlingBurstLimit: 50, ThrottlingRateLimit: 25}
+        - {
+            ResourcePath: "/*",
+            HttpMethod: "*",
+            MetricsEnabled: true,
+            ThrottlingBurstLimit: 50,
+            ThrottlingRateLimit: 25,
+          }
 
   # ---------------------------------------------------------------- Lambda
   CommonLayer:
@@ -706,6 +756,12 @@ Resources:
             Path: "/manager/{id}/assign-employee"
             Method: post
         Route07:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/{id}/assign-employee/{employeeId}"
+            Method: delete
+        Route08:
           Type: Api
           Properties:
             RestApiId: !Ref Api

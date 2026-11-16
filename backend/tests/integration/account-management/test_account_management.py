@@ -33,6 +33,10 @@ USER_ROW = {
 OLD_EMPLOYEE = {"employee_id": 42, "email": "ada@example.com",
                 "position_id": 3, "team_id": 2, "cognito_sub": "sub-ada",
                 "first_name": "Ada", "last_name": "Lovelace"}
+FULL_OLD = {**OLD_EMPLOYEE, "phone": None, "street": None, "city": None,
+            "province": None, "postal_code": None, "country": None}
+ADDRESS = {"street": "123 Main St", "city": "Vancouver", "province": "bc",
+           "postalCode": "v6b1a1", "country": "ca"}
 ACTIVE_LOGIN = {"status": "ACTIVE", "cognito_sub": "sub-ada"}
 TEAM_ROW = {"team_id": 9, "name": "Ops", "manager_id": 7,
             "manager_name": "Mei Ross", "member_count": 0}
@@ -120,6 +124,28 @@ def test_every_route_requires_it_role(caller, db, cognito, method, resource):
     assert db.calls == [] and cognito.calls == []
 
 
+# ---- configuration ---------------------------------------------------
+
+def test_cognito_client_is_created_once(monkeypatch):
+    """The boto3 client is built on first use, then reused by later
+    calls in the same warm Lambda."""
+    made = []
+    monkeypatch.setattr(am, "_cognito", None)
+    monkeypatch.setattr(am.boto3, "client",
+                        lambda name: made.append(name) or object())
+    assert am.cognito() is am.cognito()
+    assert made == ["cognito-idp"]
+
+
+def test_missing_user_pool_id_is_500(monkeypatch, db, cognito):
+    """A deploy without USER_POOL_ID fails with a generic 500 before any
+    Cognito call, rather than calling an undefined pool."""
+    monkeypatch.delenv("USER_POOL_ID")
+    status, res = call("POST", "/it/create-account", body=VALID_ACCOUNT)
+    assert status == 500 and "USER_POOL_ID" not in res["error"]
+    assert cognito.calls == [] and db.ran("INSERT INTO employee") == []
+
+
 # ---- create account --------------------------------------------------
 
 def test_create_account_success(db, cognito, audits):
@@ -142,6 +168,27 @@ def test_create_account_with_elevated_role(db):
     status, _ = call("POST", "/it/create-account", body=body)
     [(_, params)] = db.ran("INSERT INTO employee")
     assert status == 201 and params[10] == 2
+
+
+def test_create_account_checks_and_stores_team(db):
+    """A teamId is checked against live teams and saved on the new
+    employee row."""
+    body = {**VALID_ACCOUNT, "teamId": 2}
+    status, _ = call("POST", "/it/create-account", body=body)
+    [(_, params)] = db.ran("INSERT INTO employee")
+    assert status == 201 and params[12] == 2
+    assert db.params("FROM team WHERE team_id") == [(2,)]
+
+
+def test_create_account_unknown_team_deletes_cognito_user(db, cognito):
+    """An unknown or deleted team is a 400, and the Cognito user made a
+    moment earlier is removed again."""
+    db.on("FROM team WHERE team_id", None)
+    body = {**VALID_ACCOUNT, "teamId": 2}
+    status, res = call("POST", "/it/create-account", body=body)
+    assert status == 400 and "teamId 2 does not exist" in res["error"]
+    assert cognito.names() == ["admin_create_user", "admin_delete_user"]
+    assert db.ran("INSERT INTO employee") == []
 
 
 @pytest.mark.parametrize("change", [
@@ -304,6 +351,59 @@ def test_update_unknown_user_is_404(db):
     assert status == 404
 
 
+def test_update_profile_position_and_team(db, audits):
+    """Name, phone, address, position and team are cleaned up, written
+    in one UPDATE, and the new position and team are checked to exist."""
+    db.on("SELECT * FROM employee WHERE employee_id", FULL_OLD)
+    body = {"lastName": " Byron ", "phone": "+16045550142",
+            "address": ADDRESS, "positionId": 4, "teamId": 5}
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"}, body=body)
+    assert status == 200
+    assert db.params("UPDATE employee SET") == [[
+        "Byron", "+16045550142", "123 Main St", "Vancouver", "BC",
+        "V6B 1A1", "CA", 4, 5, 42,
+    ]]
+    assert db.params("FROM position WHERE position_id") == [(4,)]
+    assert db.params("FROM team WHERE team_id") == [(5,)]
+    assert audits[0]["old"]["position_id"] == 3
+    assert audits[0]["new"]["position_id"] == 4
+
+
+def test_update_can_clear_phone_and_team(db):
+    """An empty phone and a null teamId clear those fields; a null team
+    isn't looked up."""
+    db.on("SELECT * FROM employee WHERE employee_id", FULL_OLD)
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                     body={"phone": "", "teamId": None})
+    assert status == 200
+    assert db.params("UPDATE employee SET") == [[None, None, 42]]
+    assert db.ran("FROM team WHERE team_id") == []
+
+
+def test_update_same_position_and_team_skip_checks(db):
+    """Re-sending the current position and team doesn't look them up
+    again; only real changes are checked."""
+    db.on("SELECT * FROM employee WHERE employee_id", OLD_EMPLOYEE)
+    db.on("FROM position WHERE position_id", None)
+    db.on("FROM team WHERE team_id", None)
+    status, _ = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                     body={"positionId": 3, "teamId": 2})
+    assert status == 200
+
+
+@pytest.mark.parametrize("field", ["positionId", "teamId"])
+def test_update_to_unknown_position_or_team_is_400(db, field):
+    """Moving someone to a position or team that doesn't exist is a 400
+    naming the field, and nothing is written."""
+    db.on("SELECT * FROM employee WHERE employee_id", OLD_EMPLOYEE)
+    db.on("FROM position WHERE position_id", None)
+    db.on("FROM team WHERE team_id", None)
+    status, res = call("PATCH", "/it/users/{id}", path={"id": "42"},
+                       body={field: 99})
+    assert status == 400 and f"{field} 99 does not exist" in res["error"]
+    assert db.ran("UPDATE employee") == [] and db.rollbacks == 1
+
+
 # ---- status and role -------------------------------------------------
 
 def test_cannot_deactivate_yourself(db):
@@ -367,6 +467,18 @@ def test_role_is_required(db):
     assert status == 400 and "role is required" in body["error"]
 
 
+@pytest.mark.parametrize("route, body", [
+    (STATUS_ROUTE, {"status": "DEACTIVATED"}),
+    (ROLE_ROUTE, {"role": "IT"}),
+])
+def test_status_or_role_of_unknown_user_is_404(db, cognito, route, body):
+    """An id with no employee row is a 404, with no Cognito call and
+    nothing written."""
+    status, _ = call("PATCH", route, path={"id": "999"}, body=body)
+    assert status == 404 and cognito.calls == []
+    assert db.ran("UPDATE employee") == []
+
+
 def test_demoting_a_team_manager_is_409(db, audits):
     """Someone who still manages a team can't lose the MANAGER role
     until the team gets another manager."""
@@ -389,6 +501,17 @@ def test_promote_to_it_stores_role_id(db, audits):
 
 
 # ---- teams and positions ---------------------------------------------
+
+def test_list_teams_returns_live_teams_by_name(db):
+    """Deleted teams are left out, and the rest come back sorted by name
+    with their manager and member count."""
+    db.on("WHERE NOT t.is_deleted", [TEAM_ROW])
+    status, body = call("GET", "/it/teams")
+    [(sql, _)] = db.ran("WHERE NOT t.is_deleted")
+    assert status == 200 and sql.endswith("ORDER BY t.name")
+    assert body == {"teams": [{"teamId": 9, "name": "Ops", "managerId": 7,
+                               "managerName": "Mei Ross", "memberCount": 0}]}
+
 
 def test_create_team(db, audits):
     """A team needs a name and a manager who holds the MANAGER role;
@@ -417,6 +540,66 @@ def test_create_team_duplicate_name_is_409(db):
     db.on("WHERE lower(name)", {"x": 1})
     status, _ = call("POST", "/it/teams", body={"name": "OPS", "managerId": 7})
     assert status == 409 and db.ran("INSERT INTO team") == []
+
+
+def test_create_team_unknown_manager_is_400(db):
+    """A managerId with no employee row is a 400, not a foreign key
+    error from the INSERT."""
+    db.on("SELECT r.name AS role", None)
+    status, res = call("POST", "/it/teams", body={"name": "Ops", "managerId": 99})
+    assert status == 400 and "managerId 99 does not exist" in res["error"]
+    assert db.ran("INSERT INTO team") == []
+
+
+def test_update_team_name_and_manager(db, audits):
+    """A rename is only checked against other teams, the new manager
+    must hold the MANAGER role, and the change is audited."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("SELECT r.name AS role", {"role": "MANAGER"})
+    db.on("WHERE t.team_id", {**TEAM_ROW, "name": "Platform", "manager_id": 8})
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                       body={"name": " Platform ", "managerId": 8})
+    assert status == 200 and res["name"] == "Platform"
+    assert db.params("WHERE lower(name)") == [("Platform", 9)]
+    assert db.params("UPDATE team SET") == [["Platform", 8, 9]]
+    assert audits[0]["old"] == {"name": "Ops", "manager_id": 7}
+    assert audits[0]["new"] == {"name": "Platform", "manager_id": 8}
+
+
+def test_update_team_name_taken_is_409(db):
+    """Renaming to another team's name (any case) is a 409, and nothing
+    is written."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("WHERE lower(name)", {"x": 1})
+    status, _ = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                     body={"name": "platform"})
+    assert status == 409 and db.ran("UPDATE team") == []
+
+
+def test_update_team_new_manager_must_hold_manager_role(db):
+    """Handing a team to someone without the MANAGER role is refused,
+    the same as when creating a team."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("SELECT r.name AS role", {"role": "IT"})
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                       body={"managerId": 1})
+    assert status == 400 and "Manager role" in res["error"]
+    assert db.ran("UPDATE team") == []
+
+
+def test_update_unknown_team_is_404(db):
+    """A team id that doesn't exist or was already deleted is a 404."""
+    db.on("SELECT * FROM team WHERE team_id", None)
+    status, _ = call("PATCH", "/it/teams/{id}", path={"id": "999"},
+                     body={"name": "Ops"})
+    assert status == 404
+
+
+def test_update_team_with_no_fields_is_400(db):
+    """An empty PATCH is rejected before a transaction is opened."""
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"}, body={})
+    assert status == 400 and "No updatable fields" in res["error"]
+    assert db.calls == []
 
 
 def test_delete_team_with_members_is_409(db, audits):
