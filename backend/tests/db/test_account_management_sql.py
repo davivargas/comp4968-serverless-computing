@@ -123,3 +123,12 @@ def test_team_manager_keeps_manager_role(base):
     status, _ = call("PATCH", "/it/users/{id}/role", path={"id": str(base.mei)},
                      body={"role": None})
     assert status == 409
+
+
+def test_positions_list_has_no_wages(base):
+    """The positions dropdown lists live positions without pay."""
+    status, body = call("GET", "/it/positions")
+    titles = [p["title"] for p in body["positions"]]
+    assert status == 200 and "Developer" in titles
+    assert all(set(p) == {"positionId", "title", "payGrade"}
+               for p in body["positions"])
