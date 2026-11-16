@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from helpers.fakes import FakeCognito, FakeDB, norm
+from helpers.fakes import FakeCognito, FakeCursor, FakeDB, norm
 from helpers.lambdas import DB_DIR, load_lambda
 from payroll_common.http_utils import HttpError
 
@@ -444,6 +444,22 @@ def test_demo_cleanup_continues_past_a_failed_delete(conn, cognito):
     with pytest.raises(RuntimeError, match="db down"):
         dbi.lambda_handler({"action": "demo"})
     assert cognito.users("admin_delete_user") == EMAILS
+
+
+def test_demo_ignores_a_failed_final_cursor_close(conn, monkeypatch):
+    """The cursor is closed again in a finally block; if that second
+    close fails, a load that already committed still succeeds."""
+    closes = []
+
+    def close(self):
+        closes.append(self)
+        if len(closes) > 1:
+            raise RuntimeError("cursor already closed")
+
+    ready_for_demo(conn)
+    monkeypatch.setattr(FakeCursor, "close", close)
+    result = dbi.lambda_handler({"action": "demo"})
+    assert result["ok"] and conn.commits == 1 and len(closes) == 2
 
 
 # ---- reset demo data -------------------------------------------------
