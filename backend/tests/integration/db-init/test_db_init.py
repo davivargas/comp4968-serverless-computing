@@ -434,6 +434,18 @@ def test_demo_unexpected_error_cleans_up_then_raises(conn, cognito):
     assert cognito.users("admin_delete_user") == ["ana@test.com"]
 
 
+def test_demo_cleanup_continues_past_a_failed_delete(conn, cognito):
+    """If deleting one new login fails, the others are still deleted,
+    so one Cognito error doesn't leave every demo login behind."""
+    ready_for_demo(conn)
+    conn.fail_on("FROM pay_period pp", RuntimeError("db down"))
+    failure = RuntimeError("Cognito down")
+    cognito.errors[("admin_delete_user", "ana@test.com")] = failure
+    with pytest.raises(RuntimeError, match="db down"):
+        dbi.lambda_handler({"action": "demo"})
+    assert cognito.users("admin_delete_user") == EMAILS
+
+
 # ---- reset demo data -------------------------------------------------
 
 def test_reset_without_confirm_only_previews(conn, cognito):
