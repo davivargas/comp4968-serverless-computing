@@ -22,3 +22,10 @@ def test_authenticate_finds_the_employee_and_role(base):
     assert ctx["employee_id"] == base.mei and ctx["name"] == "Mei Test"
     assert ctx["role"] == "MANAGER" and ctx["active_role"] == "MANAGER"
     assert ctx["available"] == ["EMPLOYEE", "MANAGER"]
+
+
+def test_authenticate_employee_without_elevated_role(base):
+    """No role_id means EMPLOYEE only; the team comes from the row."""
+    ctx = signed_in("sub-ana")
+    assert ctx["role"] is None and ctx["available"] == ["EMPLOYEE"]
+    assert ctx["team_id"] == base.team
