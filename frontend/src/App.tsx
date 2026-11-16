@@ -20,6 +20,7 @@ import EmployeeDirectoryPage from '@/pages/payroll_admin/EmployeeDirectoryPage'
 import EmployeeRecordsPage from '@/pages/payroll_admin/EmployeeRecordsPage'
 import PayrollReleasesPage from '@/pages/payroll_admin/PayrollReleasesPage'
 import PayrollAuditPage from '@/pages/payroll_admin/PayrollAuditPage'
+import StatHolidaysPage from '@/pages/payroll_admin/StatHolidaysPage'
 import ManagerLayout from '@/pages/manager/ManagerLayout'
 import ManagerDashboardPage from '@/pages/manager/DashboardPage'
 import ManagerTimesheetsPage from '@/pages/manager/TimesheetsPage'
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="records/:id" element={<EmployeeRecordsPage />} />
           <Route path="releases" element={<PayrollReleasesPage />} />
           <Route path="audit" element={<PayrollAuditPage />} />
+          <Route path="stat-holidays" element={<StatHolidaysPage />} />
         </Route>
         <Route path="/manager" element={<Guard portalId="manager"><ManagerLayout /></Guard>}>
           <Route index element={<Navigate to="dashboard" replace />} />

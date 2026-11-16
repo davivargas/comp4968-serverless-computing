@@ -11,17 +11,20 @@ React Router defines the landing page, mock login, and role-specific portal rout
 | `frontend/src/pages/employee` | Time entry/submission, earnings dashboard, pay stubs, profile |
 | `frontend/src/pages/it` | Account creation, roles, titles, status, credentials |
 | `frontend/src/pages/manager` | Team timesheet review, projects and assignments, team directory |
+| `frontend/src/pages/payroll_admin` | Payroll dashboard, employee directory and records, payroll releases, audit log, positions, and stat holidays |
 | `frontend/src/lib/{employee,it,manager}` | Typed API contracts, mock implementations, placeholder sessions, domain helpers |
+| `frontend/src/lib/payroll_admin` | Payroll Admin API types/client, mock data, and domain helpers |
 | `frontend/src/components/ui` | Shared Radix/shadcn-style controls, cards, tables, sidebar, dialogs, charts |
 | `frontend/src/components/it` | Reusable IT-specific tables and dialogs |
 | `frontend/src/components/PageHeader.tsx` | Shared page heading and action layout |
 | `frontend/src/index.css` | Tailwind setup, shared theme tokens and light/dark styles |
 | `docs/*-api.md` | Proposed backend contracts |
 
-The Payroll Admin portal remains a placeholder. Login buttons currently navigate to portals without
-authenticating. Employee pay-stub PDFs are generated in the browser with jsPDF.
+The Payroll Admin portal is available under `/payroll` and uses a dedicated layout and API layer.
+Its API contract is documented in [`payroll-admin-api.md`](payroll-admin-api.md). Employee pay-stub
+PDFs are generated in the browser with jsPDF.
 
-## Existing patterns followed by Manager
+## Portal patterns
 
 Each portal owns a layout and domain-specific pages, types, API interface, and mock implementation.
 `VITE_API_BASE_URL` selects HTTP instead of a browser mock. Shared UI components supply typography,
@@ -33,12 +36,18 @@ operate on whole employee pay periods. Project management includes creation, ren
 restricted soft deletion, viewing assignments, and assigning active team members or the manager.
 Its seeded data persists in `mock.manager.v1` in localStorage.
 
+Payroll Admin has Dashboard, Employee Directory, Employee Records, Payroll Releases, Audit Log,
+Positions, and Stat Holidays views under `/payroll`. The employee views support period-aware pay
+aggregation and filters. Payroll Releases displays periods and release eligibility and calls the
+period release endpoint; positions and stat holidays use their documented management endpoints.
+The mock implementation supports local portal workflows when `VITE_API_BASE_URL` is not configured.
+
 ## Review findings and backend integration work
 
-1. **Authentication and authorization are unfinished.** Existing login/session code is a placeholder.
-   HTTP clients still need Cognito tokens, authenticated session data, and backend enforcement of roles,
-   team membership, project ownership, and payroll locks. Manager sends the workbook's `X-Active-Role`
-   header; role-header/session conventions should be aligned across existing clients.
+1. **Production authentication and authorization need environment and backend integration.** The frontend
+   has Cognito login/session and role-aware portal flows, but a deployment still needs valid Cognito and
+   API configuration, working token forwarding, and backend enforcement of roles, team membership,
+   project ownership, and payroll locks. Confirm the active-role header/session convention across clients.
 2. **Mock data is isolated by portal.** Manager matches the IT seed's names/IDs, but stores its own data.
    Employee submissions do not appear automatically in Manager, and manager approvals do not update
    the employee store. This demo is for exercising Manager workflows independently.
@@ -51,8 +60,8 @@ Its seeded data persists in `mock.manager.v1` in localStorage.
    with a clearly documented demo period; live integration must supply period boundaries and enforce
    review eligibility rather than trusting dates entered in the browser.
 5. **Build/lint have warnings.** Vite reports the existing `__dirname` configuration and large output chunks.
-   Oxlint reports Fast Refresh/export and React-effect/purity warnings across existing files, plus the
-   same effect-loading pattern in Manager. These are warnings, not build errors.
+   Oxlint reports Fast Refresh/export and React-effect/purity warnings across existing files and portals.
+   These are warnings, not build errors.
 
 ## Validation
 

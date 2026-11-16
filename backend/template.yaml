@@ -1,0 +1,969 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Timesheet & payroll MVP backend. VPC with endpoints (no NAT, no internet), RDS PostgreSQL (deletion protection on),
+  Cognito, API Gateway, 10 Python Lambdas + shared layer, SQS audit queue, DynamoDB audit table, KMS, Secrets Manager.
+  Build first with scripts/build.sh (creates dist/*.zip), then run: sam deploy --guided
+
+Parameters:
+  DeletionProtection:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      "true" protects the database, the audit table and the user pool from deletion, so the stack cannot be deleted.
+      To delete the stack later, redeploy once with "false", then delete it.
+  DbName:
+    Type: String
+    Default: payroll
+    AllowedPattern: "[a-z][a-z0-9_]{0,62}"
+  DbEngineVersion:
+    Type: String
+    Default: "16.13"
+    Description: >
+      PostgreSQL version. If AWS rejects it, list the current ones with:
+      aws rds describe-db-engine-versions --engine postgres --query "DBEngineVersions[].EngineVersion" --region us-west-2
+      and pick a 16.x (or 17.x) version.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    Description: db.t4g.micro is enough for an MVP; use db.t4g.small or larger for real use.
+  DbMultiAZ:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  DbBackupDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  PrivateSubnetACidr:
+    Type: String
+    Default: 10.0.1.0/24
+  PrivateSubnetBCidr:
+    Type: String
+    Default: 10.0.2.0/24
+  EndpointsInBothAZs:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "false puts each interface endpoint in one AZ only (cheaper). true puts it in both (about double the endpoint cost)."
+  CorsOrigin:
+    Type: String
+    Default: "*"
+    Description: Web app origin allowed to call the API, e.g. https://d123.cloudfront.net. "*" is for testing only.
+  PayPeriodAnchor:
+    Type: String
+    Default: "2026-01-04"
+    Description: First pay period start. Must be a Sunday.
+  PayDateLagDays:
+    Type: Number
+    Default: 6
+    Description: Days from the end of a pay period (a Saturday) to the pay date. 6 means the Friday after the period ends. BC allows up to 8.
+  SesSourceArn:
+    Type: String
+    Default: ""
+    Description: >
+      Optional. ARN of a verified SES identity (e.g. arn:aws:ses:us-west-2:123456789012:identity/payroll@example.com).
+      When set, Cognito sends invite emails through SES. Leave empty to use Cognito's built-in email (small daily limit).
+
+Conditions:
+  Protect: !Equals [!Ref DeletionProtection, "true"]
+  EndpointsBoth: !Equals [!Ref EndpointsInBothAZs, "true"]
+  UseSes: !Not [!Equals [!Ref SesSourceArn, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Handler: lambda_function.lambda_handler
+    Architectures: [x86_64]
+    MemorySize: 256
+    Timeout: 10
+    Environment:
+      Variables:
+        CORS_ORIGIN: !Ref CorsOrigin
+        PAY_PERIOD_ANCHOR: !Ref PayPeriodAnchor
+        PAY_DATE_LAG_DAYS: !Ref PayDateLagDays
+
+Resources:
+  # ---------------------------------------------------------------- network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-vpc"}]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-a"}]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-b"}]
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private"}]
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRouteTable}
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRouteTable}
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda functions that use the database
+      VpcId: !Ref Vpc
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL, reachable only from the Lambda security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref LambdaSecurityGroup, Description: Lambda functions}
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC interface endpoints, reachable only from the Lambda security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref LambdaSecurityGroup, Description: Lambda functions}
+
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.secretsmanager"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+
+  KmsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.kms"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+
+  SqsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sqs"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+
+  CognitoIdpEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.cognito-idp"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds: !If [EndpointsBoth, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PrivateSubnetA]]
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+  # ---------------------------------------------------------------- database
+  DbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Database login used by the Lambda functions
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "payroll_admin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for the payroll database
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      DBInstanceClass: !Ref DbInstanceClass
+      DBName: !Ref DbName
+      MasterUsername: payroll_admin
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DbSecret}:SecretString:password}}"
+      AllocatedStorage: "20"
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: !Ref DbMultiAZ
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref DbBackupDays
+      DeletionProtection: !If [Protect, true, false]
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      EnableCloudwatchLogsExports: [postgresql]
+
+  DbSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DbSecret
+      TargetId: !Ref DbInstance
+      TargetType: AWS::RDS::DBInstance
+
+  DepositKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts direct-deposit account numbers (employee-profiles Lambda)
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministration
+            Effect: Allow
+            Principal: {AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}
+            Action: "kms:*"
+            Resource: "*"
+
+  DepositKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${AWS::StackName}-deposit"
+      TargetKeyId: !Ref DepositKey
+
+  # ---------------------------------------------------------------- audit trail
+  AuditDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  AuditQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AuditDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: month, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: month, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      DeletionProtectionEnabled: !If [Protect, true, false]
+
+  # ---------------------------------------------------------------- sign-in
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      DeletionProtection: !If [Protect, ACTIVE, INACTIVE]
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: "OFF"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: Your timesheet account
+          EmailMessage: "Your timesheet account is ready. Sign in with {username} and the temporary password {####}. You will be asked to choose a new password."
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - {Name: verified_email, Priority: 1}
+      EmailConfiguration: !If
+        - UseSes
+        - {EmailSendingAccount: DEVELOPER, SourceArn: !Ref SesSourceArn}
+        - {EmailSendingAccount: COGNITO_DEFAULT}
+      Schema:
+        - {Name: email, AttributeDataType: String, Required: true, Mutable: true}
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: web-app
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_ADMIN_USER_PASSWORD_AUTH]   # the last one lets you get a test token from the CLI (needs AWS credentials)
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders: [COGNITO]
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 12
+      TokenValidityUnits: {AccessToken: minutes, IdToken: minutes, RefreshToken: hours}
+
+  # ---------------------------------------------------------------- API
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      EndpointConfiguration: {Type: REGIONAL}
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+            Identity: {Header: Authorization}
+      Cors:
+        AllowOrigin: !Sub "'${CorsOrigin}'"
+        AllowHeaders: "'Content-Type,Authorization,X-Active-Role'"
+        AllowMethods: "'GET,POST,PATCH,DELETE,OPTIONS'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${CorsOrigin}'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${CorsOrigin}'"
+      MethodSettings:
+        - {ResourcePath: "/*", HttpMethod: "*", MetricsEnabled: true, ThrottlingBurstLimit: 50, ThrottlingRateLimit: 25}
+
+  # ---------------------------------------------------------------- Lambda
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AWS::StackName}-payroll-common"
+      Description: payroll_common - router, auth, DB, audit queue, payroll maths (pg8000, tzdata)
+      ContentUri: dist/payroll-common-layer.zip
+      CompatibleRuntimes: [python3.12]
+      RetentionPolicy: Delete
+
+  AccountManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/account-management.zip
+      Description: account-management
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+          USER_POOL_ID: !Ref UserPool
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminDeleteUser
+                - cognito-idp:AdminResetUserPassword
+                - cognito-idp:AdminDisableUser
+                - cognito-idp:AdminEnableUser
+                - cognito-idp:AdminUserGlobalSignOut
+                - cognito-idp:AdminUpdateUserAttributes
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/create-account"
+            Method: post
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users/{id}"
+            Method: get
+        Route04:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users/{id}/reset-password"
+            Method: post
+        Route05:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users/{id}"
+            Method: patch
+        Route06:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users/{id}/status"
+            Method: patch
+        Route07:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/users/{id}/role"
+            Method: patch
+        Route08:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/teams"
+            Method: get
+        Route09:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/teams"
+            Method: post
+        Route10:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/teams/{id}"
+            Method: patch
+        Route11:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/positions"
+            Method: get
+
+  EmployeeTimesheetsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/employee-timesheets.zip
+      Description: employee-timesheets
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/pay-period"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/timesheets"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/sick-days"
+            Method: get
+        Route04:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/timesheets"
+            Method: post
+        Route05:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/timesheets/{timesheetId}"
+            Method: delete
+        Route06:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/timesheets/submit"
+            Method: patch
+
+  ManagerTimesheetsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/manager-timesheets.zip
+      Description: manager-timesheets
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/timesheets"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/timesheets/{id}"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/employees/{id}/timesheets/approve"
+            Method: patch
+        Route04:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/employees/{id}/timesheets/reject"
+            Method: patch
+
+  EmployeeProfilesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/employee-profiles.zip
+      Description: employee-profiles
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+          DEPOSIT_KMS_KEY_ID: !Ref DepositKey
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+        - Statement:
+            - Effect: Allow
+              Action: kms:Encrypt
+              Resource: !GetAtt DepositKey.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/me"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/profile"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/profile"
+            Method: patch
+
+  ProjectManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/project-management.zip
+      Description: project-management
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/projects"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/projects"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/projects/{id}/employees"
+            Method: get
+        Route04:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/projects"
+            Method: post
+        Route05:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/projects/{id}"
+            Method: patch
+        Route06:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/{id}/assign-employee"
+            Method: post
+        Route07:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/manager/{id}/employees"
+            Method: get
+
+  PayrollProcessingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/payroll-processing.zip
+      Description: payroll-processing
+      Timeout: 60
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_QUEUE_URL: !Ref AuditQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AuditQueue.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/pay-periods"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/payroll/{id}/release"
+            Method: patch
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/positions"
+            Method: get
+        Route04:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/positions"
+            Method: post
+        Route05:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/positions/{id}"
+            Method: patch
+        Route06:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/stat-holidays"
+            Method: get
+        Route07:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/stat-holidays"
+            Method: post
+        Route08:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/stat-holidays/{date}"
+            Method: delete
+
+  EmployeePayFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/employee-pay.zip
+      Description: employee-pay
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/aggregate-pay"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/pay-stubs"
+            Method: get
+        Route03:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/employee/{id}/pay-stubs/{payDate}"
+            Method: get
+
+  PayrollReportingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/payroll-reporting.zip
+      Description: payroll-reporting
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/employees"
+            Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/pa/employees/{id}"
+            Method: get
+
+  AuditReaderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/audit-reader.zip
+      Description: audit-reader
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          AUDIT_TABLE: !Ref AuditTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt AuditTable.Arn
+      Events:
+        Route01:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/audit/logs"
+            Method: get
+
+  DbInitFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/db-init.zip
+      Description: db-init
+      Timeout: 300
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          USER_POOL_ID: !Ref UserPool
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminDeleteUser
+                - cognito-idp:AdminSetUserPassword
+              Resource: !GetAtt UserPool.Arn
+
+  AuditWriterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/audit-writer.zip
+      Description: audit-writer
+      Timeout: 30
+      Environment:
+        Variables:
+          AUDIT_TABLE: !Ref AuditTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt AuditTable.Arn
+      Events:
+        AuditQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AuditQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the web app (stage prod)
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  DbEndpoint:
+    Value: !GetAtt DbInstance.Endpoint.Address
+  DbName:
+    Value: !Ref DbName
+  DbSecretArn:
+    Description: Secret holding the database host, user and password (for loading the schema with psql)
+    Value: !Ref DbSecret
+  PrivateSubnetId:
+    Description: Subnet to use for a CloudShell VPC environment when loading the schema
+    Value: !Ref PrivateSubnetA
+  LambdaSecurityGroupId:
+    Description: Security group to use for a CloudShell VPC environment (it may reach the database)
+    Value: !Ref LambdaSecurityGroup
+  DbInitFunctionName:
+    Description: One-off setup Lambda - invoke it to load the schema and create the first IT admin
+    Value: !Ref DbInitFunction
+  AuditQueueUrl:
+    Value: !Ref AuditQueue
+  AuditTableName:
+    Value: !Ref AuditTable
+  DepositKeyArn:
+    Value: !GetAtt DepositKey.Arn

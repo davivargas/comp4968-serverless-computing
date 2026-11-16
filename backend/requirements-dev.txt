@@ -1,0 +1,8 @@
+# Same runtime packages and versions as the deployed Lambda layer
+-r layers/common/requirements.txt
+
+# Preinstalled in the Lambda runtime, so it's not in the layer file
+boto3
+
+pytest>=8
+pytest-cov
