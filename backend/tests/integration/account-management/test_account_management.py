@@ -502,6 +502,17 @@ def test_promote_to_it_stores_role_id(db, audits):
 
 # ---- teams and positions ---------------------------------------------
 
+def test_list_teams_returns_live_teams_by_name(db):
+    """Deleted teams are left out, and the rest come back sorted by name
+    with their manager and member count."""
+    db.on("WHERE NOT t.is_deleted", [TEAM_ROW])
+    status, body = call("GET", "/it/teams")
+    [(sql, _)] = db.ran("WHERE NOT t.is_deleted")
+    assert status == 200 and sql.endswith("ORDER BY t.name")
+    assert body == {"teams": [{"teamId": 9, "name": "Ops", "managerId": 7,
+                               "managerName": "Mei Ross", "memberCount": 0}]}
+
+
 def test_create_team(db, audits):
     """A team needs a name and a manager who holds the MANAGER role;
     the new team is returned with 201."""
