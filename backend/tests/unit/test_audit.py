@@ -92,6 +92,15 @@ def test_audit_serialises_db_types(sent):
     assert msg["newValues"] == {"hourly_wage": 25.5, "effective_from": "2026-01-04"}
 
 
+def test_audit_serialises_other_types_as_text(sent):
+    """Any other value json can't handle (e.g. a UUID) is stored as its
+    text form instead of failing the audit."""
+    ref = uuid.UUID(int=1)
+    audit(None, CTX, "team", 1, "INSERT", None, {"ref": ref})
+    [msg] = messages(sent)
+    assert msg["newValues"] == {"ref": str(ref)}
+
+
 # ---- transaction batching --------------------------------------------
 
 def test_begin_holds_messages_until_flush(sent):
