@@ -21,6 +21,7 @@ end, so releases don't depend on the real date.
 
 FIRST = datetime.date(2026, 1, 4)
 SECOND = datetime.date(2026, 1, 18)
+FAMILY_DAY = datetime.date(2026, 2, 16)
 NINE, FIVE = datetime.time(9, 0), datetime.time(17, 0)
 
 
@@ -126,3 +127,17 @@ def test_unapproved_entry_blocks_release(conn, base, ctx):
         release_period(conn, pid, ctx)
     assert err.value.status == 409 and "1 timesheet entry" in err.value.message
     assert one(conn, "SELECT count(*)::int AS n FROM paystub")["n"] == 0
+
+
+def test_stat_holiday_and_sick_day_lines(conn, base, ctx):
+    """Work on Family Day (from stat_holiday) earns the stat premium,
+    and a day on the sick project is paid as SICK."""
+    work(conn, base, FAMILY_DAY)
+    work(conn, base, FAMILY_DAY + datetime.timedelta(days=1), project=base.sick)
+    pid = period_id(conn, FAMILY_DAY - datetime.timedelta(days=1))
+    release_period(conn, pid, ctx)
+    s = stub(conn, pid)
+    assert s["stat_hours"] == Decimal("8") and s["sick_hours"] == Decimal("8")
+    types = {r["line_type"] for r in query(
+        conn, "SELECT line_type FROM paystub_earning")}
+    assert {"STAT_PREMIUM", "SICK"} <= types
