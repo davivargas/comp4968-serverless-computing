@@ -87,3 +87,11 @@ def test_schema_refuses_bad_rows(conn, base, table, cols, code):
     with pytest.raises(pg8000.dbapi.DatabaseError) as err:
         insert(conn, table, **cols(base))
     assert sqlstate(err.value) == code
+
+
+def test_deleted_team_name_can_be_reused(conn, base):
+    """Team names only have to be unique among live teams, so a deleted
+    team's name is free again."""
+    query(conn, "UPDATE team SET is_deleted = true WHERE team_id = %s",
+          (base.team,))
+    insert(conn, "team", name="Platform", manager_id=base.mei)
