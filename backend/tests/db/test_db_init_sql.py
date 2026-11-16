@@ -80,3 +80,19 @@ def test_demo_loads_every_file_and_releases_periods(conn, setup):
         MANIFEST["emails"])
     assert count(conn, "employee WHERE cognito_sub LIKE 'sub-%@test.com'") \
         == len(MANIFEST["emails"])
+
+
+def test_reset_removes_only_the_demo_data(conn, setup):
+    """Reset previews first, then deletes every demo row and login while
+    keeping the first admin and the special projects."""
+    dbi.lambda_handler({"action": "seed", **ADMIN})
+    dbi.lambda_handler({"action": "demo"})
+    preview = dbi.lambda_handler({"action": "reset"})
+    assert preview["preview"] and count(conn, "paystub") > 0
+    result = dbi.lambda_handler({"action": "reset", "confirm": True})
+    assert result["ok"]
+    assert count(conn, "employee") == 1 and count(conn, "team") == 0
+    assert count(conn, "paystub") == 0 and count(conn, "timesheet_entry") == 0
+    assert count(conn, "pay_period WHERE status = 'RELEASED'") == 0
+    assert count(conn, "project") == 3
+    assert sorted(setup.users("admin_delete_user")) == sorted(MANIFEST["emails"])
