@@ -145,6 +145,52 @@ def test_assign_employee_rejects_non_team_member(monkeypatch):
     assert str(exc.value) == "That employee is not an active member of a team you manage"
 
 
+def test_remove_employee_deletes_assignment_and_audits_change(monkeypatch):
+    calls = []
+    audit_calls = []
+
+    class FakeTransaction:
+        def __enter__(self):
+            return "connection"
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_one(conn, sql, params=None):
+        assert "FROM project WHERE" in sql
+        assert params == (9,)
+        return {"project_id": 9, "created_by": 7, "special_type": None}
+
+    def fake_query(conn, sql, params=None):
+        calls.append((sql, params))
+        return [{"assigned_by": 6}]
+
+    monkeypatch.setattr(project_management, "transaction", FakeTransaction)
+    monkeypatch.setattr(project_management, "one", fake_one)
+    monkeypatch.setattr(project_management, "query", fake_query)
+    monkeypatch.setattr(project_management, "audit", lambda *args: audit_calls.append(args))
+
+    response = project_management.remove_employee(
+        {"pathParameters": {"id": "9", "employeeId": "8"}}, {"employee_id": 7}
+    )
+
+    assert response["statusCode"] == 204
+    assert response["body"] == ""
+    assert "DELETE FROM project_assignment" in calls[0][0]
+    assert calls[0][1] == (9, 8)
+    assert audit_calls == [
+        (
+            "connection",
+            {"employee_id": 7},
+            "project_assignment",
+            "9:8",
+            "DELETE",
+            {"project_id": 9, "employee_id": 8, "assigned_by": 6},
+            None,
+        )
+    ]
+
+
 def test_update_project_rejects_delete_when_project_is_in_use(monkeypatch):
     class FakeTransaction:
         def __enter__(self):
