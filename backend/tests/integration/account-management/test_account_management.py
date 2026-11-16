@@ -595,6 +595,13 @@ def test_update_unknown_team_is_404(db):
     assert status == 404
 
 
+def test_update_team_with_no_fields_is_400(db):
+    """An empty PATCH is rejected before a transaction is opened."""
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"}, body={})
+    assert status == 400 and "No updatable fields" in res["error"]
+    assert db.calls == []
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
