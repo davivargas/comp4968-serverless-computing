@@ -1,3 +1,5 @@
+from helpers.lambdas import DB_DIR
+from helpers.pg import CHECK, UNIQUE, insert, run_script, sqlstate
 from payroll_common.db import one, query
 
 """Tests for backend/db/schema.sql and seed.sql on a real Postgres.
@@ -27,3 +29,17 @@ def test_schema_seeds_roles_and_stat_holidays(conn):
     n = one(conn, "SELECT count(*)::int AS n FROM stat_holiday "
                   "WHERE extract(year FROM holiday_date) = 2026")["n"]
     assert n == 11
+
+
+def test_seed_sql_creates_the_first_it_admin(conn):
+    """seed.sql (the manual fallback for db-init's seed) adds one IT
+    employee on a position with a $40 wage."""
+    run_script(conn, DB_DIR / "seed.sql")
+    row = one(conn, """SELECT e.email, r.name AS role, p.title,
+                              w.hourly_wage
+                         FROM employee e JOIN role r USING (role_id)
+                         JOIN position p USING (position_id)
+                         JOIN position_wage w USING (position_id)""")
+    assert row["email"] == "admin@test.com" and row["role"] == "IT"
+    assert row["title"] == "IT Administrator"
+    assert str(row["hourly_wage"]) == "40.00"
