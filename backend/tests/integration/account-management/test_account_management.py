@@ -587,6 +587,14 @@ def test_update_team_new_manager_must_hold_manager_role(db):
     assert db.ran("UPDATE team") == []
 
 
+def test_update_unknown_team_is_404(db):
+    """A team id that doesn't exist or was already deleted is a 404."""
+    db.on("SELECT * FROM team WHERE team_id", None)
+    status, _ = call("PATCH", "/it/teams/{id}", path={"id": "999"},
+                     body={"name": "Ops"})
+    assert status == 404
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
