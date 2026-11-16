@@ -1,6 +1,8 @@
 import datetime
 import decimal
 import json
+import sys
+import types
 import uuid
 
 import pytest
@@ -12,7 +14,8 @@ and sends them to SQS only once the database transaction commits.
 
 Approach: set_sender() swaps SQS for a list, so each test sees exactly
 which batches would have been sent. The module keeps its state in
-globals, so an autouse fixture resets it around every test.
+globals, so an autouse fixture resets it around every test. The real
+SQS path is checked last, with a fake boto3 module.
 """
 
 CTX = {"employee_id": 7, "name": "Mei Ross"}
@@ -92,6 +95,15 @@ def test_audit_serialises_db_types(sent):
     assert msg["newValues"] == {"hourly_wage": 25.5, "effective_from": "2026-01-04"}
 
 
+def test_audit_serialises_other_types_as_text(sent):
+    """Any other value json can't handle (e.g. a UUID) is stored as its
+    text form instead of failing the audit."""
+    ref = uuid.UUID(int=1)
+    audit(None, CTX, "team", 1, "INSERT", None, {"ref": ref})
+    [msg] = messages(sent)
+    assert msg["newValues"] == {"ref": str(ref)}
+
+
 # ---- transaction batching --------------------------------------------
 
 def test_begin_holds_messages_until_flush(sent):
@@ -151,4 +163,50 @@ def test_missing_queue_url_fails_loudly(monkeypatch):
     set_sender(None)
     monkeypatch.delenv("AUDIT_QUEUE_URL", raising=False)
     with pytest.raises(RuntimeError, match="AUDIT_QUEUE_URL"):
+        audit(None, CTX, "team", 1, "INSERT", None, {})
+
+
+# ---- sending to SQS --------------------------------------------------
+
+@pytest.fixture
+def sqs(monkeypatch):
+    """Fake boto3 whose SQS client records each send_message_batch call
+    and answers with sqs["reply"]."""
+    state = {"clients": [], "batches": [], "reply": {}}
+
+    def send_message_batch(QueueUrl, Entries):
+        state["batches"].append((QueueUrl, Entries))
+        return state["reply"]
+
+    def client(name):
+        state["clients"].append(name)
+        return types.SimpleNamespace(send_message_batch=send_message_batch)
+
+    fake_boto3 = types.SimpleNamespace(client=client)
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    monkeypatch.setenv("AUDIT_QUEUE_URL", "https://sqs.test/audit")
+    set_sender(None)
+    return state
+
+
+def test_sqs_sends_in_batches_of_ten(sqs):
+    """SQS takes at most 10 messages per batch call, so a transaction
+    with 23 audits is sent as 10 + 10 + 3."""
+    begin()
+    for n in range(23):
+        audit(None, CTX, "team", n, "INSERT", None, {})
+    flush()
+    assert sqs["clients"] == ["sqs"]
+    assert [len(entries) for _, entries in sqs["batches"]] == [10, 10, 3]
+    assert {url for url, _ in sqs["batches"]} == {"https://sqs.test/audit"}
+    url, first = sqs["batches"][0]
+    assert [e["Id"] for e in first] == [str(n) for n in range(10)]
+    assert json.loads(first[0]["MessageBody"])["recordId"] == "0"
+
+
+def test_sqs_partial_rejection_raises(sqs):
+    """If SQS rejects some messages in a batch, sending raises instead
+    of reporting success and losing those entries."""
+    sqs["reply"] = {"Failed": [{"Id": "0", "Code": "InternalError"}]}
+    with pytest.raises(RuntimeError, match="SQS rejected 1 audit message"):
         audit(None, CTX, "team", 1, "INSERT", None, {})

@@ -6,3 +6,6 @@ boto3
 
 pytest>=8
 pytest-cov
+
+# Starts a throwaway Postgres in Docker for the tests in tests/db
+testcontainers>=4.8

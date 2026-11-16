@@ -1,17 +1,18 @@
+from collections import defaultdict
+
 from payroll_common.audit import audit
 from payroll_common.auth import assert_self, with_auth
 from payroll_common.db import get_conn, one, query, transaction
 from payroll_common.http_utils import HttpError, created, no_content, parse_body, qs, router
-from payroll_common.payroll import assert_date_editable, period_containing, today_bc
+from payroll_common.payroll import assert_date_editable, period_containing, sick_days_per_year, sick_dates_used, today_bc
 from payroll_common.shapes import ENTRY_SELECT, entry_json
-from payroll_common.validate import bad, opt_date, path_id, require_date, require_int, require_time
+from payroll_common.validate import opt_date, opt_int, path_id, require_date, require_int, require_str, require_time, bad
 
 EMP = ["EMPLOYEE"]
 MAX_BATCH = 200
 
 
 def pay_period(event, ctx):
-    """GET /employee/{id}/pay-period?date=  - the bi-weekly period containing the date (default today)."""
     assert_self(ctx, path_id(event))
     d = opt_date(qs(event).get("date"), "date") or today_bc()
     with transaction() as conn:
@@ -24,7 +25,6 @@ def pay_period(event, ctx):
 
 
 def list_entries(event, ctx):
-    """GET /employee/{id}/timesheets?from=&to="""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     q = qs(event)
@@ -37,7 +37,6 @@ def list_entries(event, ctx):
 
 
 def create_entries(event, ctx):
-    """POST /employee/{id}/timesheets  body {entries: [{date, startTime, endTime, projectCode}]}  (all or nothing)"""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     items = parse_body(event).get("entries")
@@ -54,6 +53,7 @@ def create_entries(event, ctx):
         if e <= s:
             bad(f"entries[{n}]: endTime must be after startTime (entries cannot cross midnight)")
         parsed.append({"date": d, "start": s, "end": e, "code": require_int(it.get("projectCode"), f"entries[{n}].projectCode")})
+
     for i, a in enumerate(parsed):
         for b in parsed[i + 1:]:
             if a["date"] == b["date"] and a["start"] < b["end"] and a["end"] > b["start"]:
@@ -61,17 +61,30 @@ def create_entries(event, ctx):
     ids = []
     with transaction() as conn:
         query(conn, "SELECT 1 FROM employee WHERE employee_id = %s FOR UPDATE", (emp_id,))
-        projects = {}
+        projects, special = {}, {}
         for code in {p["code"] for p in parsed}:
-            pr = one(conn, """SELECT p.project_id, p.status FROM project p JOIN project_assignment a ON a.project_id = p.project_id
-                               WHERE p.project_code = %s AND a.employee_id = %s AND NOT p.is_deleted""", (code, emp_id))
+            pr = one(conn, """SELECT p.project_id, p.status, p.special_type FROM project p
+                               LEFT JOIN project_assignment a ON a.project_id = p.project_id AND a.employee_id = %s
+                               WHERE p.project_code = %s AND NOT p.is_deleted
+                                 AND (a.employee_id IS NOT NULL OR p.special_type IS NOT NULL)""", (emp_id, code))
             if not pr:
                 raise HttpError(400, f"Unknown project code {code}, or you are not assigned to that project")
             if pr["status"] != "ACTIVE":
                 raise HttpError(400, f"Project {code} is closed")
             projects[code] = pr["project_id"]
+            special[code] = pr["special_type"]
         for d in sorted({p["date"] for p in parsed}):
             assert_date_editable(conn, d)
+        new_sick = defaultdict(set)
+        for p in parsed:
+            if special[p["code"]] == "SICK":
+                new_sick[p["date"].year].add(p["date"])
+        allowed = sick_days_per_year()
+        for year, dates in new_sick.items():
+            used = set(sick_dates_used(conn, emp_id, year))
+            if len(used | dates) > allowed:
+                raise HttpError(409, f"Only {allowed} sick days are allowed per calendar year; {len(used)} already used in {year}",
+                                {"year": year, "allowed": allowed, "used": len(used), "remaining": max(allowed - len(used), 0)})
         for p in parsed:
             if one(conn, """SELECT 1 AS x FROM timesheet_entry WHERE employee_id = %s AND work_date = %s AND NOT is_deleted
                                AND start_time < %s AND end_time > %s""", (emp_id, p["date"], p["end"], p["start"])):
@@ -87,8 +100,19 @@ def create_entries(event, ctx):
     return created({"entries": [entry_json(r) for r in rows]})
 
 
+def sick_days(event, ctx):
+    emp_id = path_id(event)
+    assert_self(ctx, emp_id)
+    year = opt_int(qs(event).get("year"), "year") or today_bc().year
+    if year < 2000 or year > 2100:
+        bad("year must be between 2000 and 2100")
+    dates = sick_dates_used(get_conn(), emp_id, year)
+    allowed = sick_days_per_year()
+    return {"employeeId": emp_id, "year": year, "allowed": allowed, "used": len(dates),
+            "remaining": max(allowed - len(dates), 0), "dates": dates}
+
+
 def delete_entry(event, ctx):
-    """DELETE /employee/{id}/timesheets/{timesheetId}  - soft delete, only before submission"""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     tid = path_id(event, "timesheetId")
@@ -105,8 +129,6 @@ def delete_entry(event, ctx):
 
 
 def submit_period(event, ctx):
-    """PATCH /employee/{id}/timesheets/submit  body {from, to}  - submits every unsubmitted entry in the range.
-    The range must sit inside one open pay period. The topmost person (no team, so no manager) is approved automatically."""
     emp_id = path_id(event)
     assert_self(ctx, emp_id)
     b = parse_body(event)
@@ -136,6 +158,7 @@ def submit_period(event, ctx):
 lambda_handler = router({
     "GET /employee/{id}/pay-period": with_auth(EMP, pay_period),
     "GET /employee/{id}/timesheets": with_auth(EMP, list_entries),
+    "GET /employee/{id}/sick-days": with_auth(EMP, sick_days),
     "POST /employee/{id}/timesheets": with_auth(EMP, create_entries),
     "DELETE /employee/{id}/timesheets/{timesheetId}": with_auth(EMP, delete_entry),
     "PATCH /employee/{id}/timesheets/submit": with_auth(EMP, submit_period),

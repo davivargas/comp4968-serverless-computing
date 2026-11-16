@@ -134,6 +134,25 @@ def assign_employee(event, ctx):
     return created(body) if inserted else body
 
 
+def remove_employee(event, ctx):
+    project_id = path_id(event)
+    emp_id = path_id(event, "employeeId")
+    with transaction() as conn:
+        proj = one(conn, "SELECT project_id, created_by, special_type FROM project WHERE project_id = %s AND NOT is_deleted", (project_id,))
+        if not proj:
+            raise HttpError(404, "Project not found")
+        if proj["special_type"]:
+            raise HttpError(400, "This is a system project that every employee can use; it cannot be removed")
+        if proj["created_by"] != ctx["employee_id"]:
+            raise HttpError(403, "You can only remove employees from projects you created")
+        removed = query(conn, "DELETE FROM project_assignment WHERE project_id = %s AND employee_id = %s RETURNING assigned_by", (project_id, emp_id))
+        if not removed:
+            raise HttpError(404, "That employee is not assigned to this project")
+        audit(conn, ctx, "project_assignment", f"{project_id}:{emp_id}", "DELETE",
+              {"project_id": project_id, "employee_id": emp_id, "assigned_by": removed[0]["assigned_by"]}, None)
+    return no_content()
+
+
 def manager_employees(event, ctx):
     mgr_id = path_id(event)
     assert_self(ctx, mgr_id)
@@ -158,5 +177,6 @@ lambda_handler = router({
     "POST /manager/projects": with_auth(MGR, create_project),
     "PATCH /manager/projects/{id}": with_auth(MGR, update_project),
     "POST /manager/{id}/assign-employee": with_auth(MGR, assign_employee),
+    "DELETE /manager/{id}/assign-employee/{employeeId}": with_auth(MGR, remove_employee),
     "GET /manager/{id}/employees": with_auth(MGR, manager_employees),
 })

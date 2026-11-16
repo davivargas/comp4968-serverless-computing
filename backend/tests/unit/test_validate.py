@@ -52,6 +52,14 @@ def test_optional_validators_treat_blank_as_missing(fn, empty):
     assert fn(empty, "field") is None
 
 
+def test_opt_str_checks_a_filled_in_value():
+    """A filled-in optional field gets the same trimming and length
+    check as a required one."""
+    assert opt_str("  Mei  ", "nickname", max_len=3) == "Mei"
+    with pytest.raises(HttpError, match="nickname must be at most 3"):
+        opt_str("Meiko", "nickname", max_len=3)
+
+
 def test_require_str_trims_whitespace():
     """Names are stored without stray spaces from copy-paste."""
     assert require_str("  Mei  ", "firstName") == "Mei"
@@ -273,6 +281,7 @@ def test_address_accepts_us_zip_plus_four():
     ({"country": "MX"}, "address.country"),
     ({"province": "XX"}, "address.province"),
     ({"postalCode": "12345"}, "address.postalCode"),
+    ({"country": "US", "province": "WA"}, "address.postalCode"),
     ({"street": ""}, "address.street"),
 ])
 def test_address_rejects_invalid_field(change, field):

@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from helpers.fakes import FakeCognito, FakeDB, norm
+from helpers.fakes import FakeCognito, FakeCursor, FakeDB, norm
 from helpers.lambdas import DB_DIR, load_lambda
 from payroll_common.http_utils import HttpError
 
@@ -141,6 +141,17 @@ def test_steps_need_the_schema_first(conn, cognito, event):
     assert conn.executed == [] and cognito.calls == []
 
 
+def test_cognito_client_is_created_once(monkeypatch):
+    """The boto3 client is built on first use, then reused by later
+    calls in the same warm Lambda."""
+    made = []
+    monkeypatch.setattr(dbi, "_cognito", None)
+    monkeypatch.setattr(dbi.boto3, "client",
+                        lambda name: made.append(name) or object())
+    assert dbi.cognito() is dbi.cognito()
+    assert made == ["cognito-idp"]
+
+
 # ---- schema ----------------------------------------------------------
 
 def test_schema_runs_schema_sql_and_commits(conn):
@@ -230,6 +241,22 @@ def test_seed_db_failure_deletes_cognito_user(conn, cognito):
     with pytest.raises(RuntimeError):
         dbi.lambda_handler({"action": "seed", **ADMIN})
     assert conn.rollbacks == 1 and conn.commits == 0
+    assert cognito.users("admin_delete_user") == ["ivy@example.com"]
+
+
+def test_seed_cleanup_failures_keep_the_original_error(conn, cognito,
+                                                       monkeypatch):
+    """Even if the rollback and the Cognito delete both fail too, the
+    caller sees the insert's error, and the delete was still tried."""
+    def lost():
+        raise RuntimeError("connection lost")
+
+    seed_cursor(conn)
+    conn.fail_on("INSERT INTO position_wage", RuntimeError("db down"))
+    monkeypatch.setattr(conn, "rollback", lost)
+    cognito.errors["admin_delete_user"] = RuntimeError("Cognito down")
+    with pytest.raises(RuntimeError, match="db down"):
+        dbi.lambda_handler({"action": "seed", **ADMIN})
     assert cognito.users("admin_delete_user") == ["ivy@example.com"]
 
 
@@ -405,6 +432,34 @@ def test_demo_unexpected_error_cleans_up_then_raises(conn, cognito):
         dbi.lambda_handler({"action": "demo"})
     assert conn.commits == 0
     assert cognito.users("admin_delete_user") == ["ana@test.com"]
+
+
+def test_demo_cleanup_continues_past_a_failed_delete(conn, cognito):
+    """If deleting one new login fails, the others are still deleted,
+    so one Cognito error doesn't leave every demo login behind."""
+    ready_for_demo(conn)
+    conn.fail_on("FROM pay_period pp", RuntimeError("db down"))
+    failure = RuntimeError("Cognito down")
+    cognito.errors[("admin_delete_user", "ana@test.com")] = failure
+    with pytest.raises(RuntimeError, match="db down"):
+        dbi.lambda_handler({"action": "demo"})
+    assert cognito.users("admin_delete_user") == EMAILS
+
+
+def test_demo_ignores_a_failed_final_cursor_close(conn, monkeypatch):
+    """The cursor is closed again in a finally block; if that second
+    close fails, a load that already committed still succeeds."""
+    closes = []
+
+    def close(self):
+        closes.append(self)
+        if len(closes) > 1:
+            raise RuntimeError("cursor already closed")
+
+    ready_for_demo(conn)
+    monkeypatch.setattr(FakeCursor, "close", close)
+    result = dbi.lambda_handler({"action": "demo"})
+    assert result["ok"] and conn.commits == 1 and len(closes) == 2
 
 
 # ---- reset demo data -------------------------------------------------
