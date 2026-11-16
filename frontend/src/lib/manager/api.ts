@@ -13,6 +13,7 @@ export interface ManagerApi {
   updateProject(id: string, input: ProjectUpdate): Promise<ManagerProject | void>
   projectEmployees(id: string): Promise<ProjectEmployees>
   assignEmployee(projectId: string, employeeId: string): Promise<{ projectId: string; employeeId: string; alreadyAssigned: boolean }>
+  removeEmployee(projectId: string, employeeId: string): Promise<void>
 }
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -38,6 +39,7 @@ const httpApi: ManagerApi = {
   updateProject: (id, input) => request(`/manager/projects/${encodeURIComponent(id)}`, 'PATCH', input),
   projectEmployees: (id) => request(`/manager/projects/${encodeURIComponent(id)}/employees`),
   assignEmployee: (id, employeeId) => request(`/manager/${encodeURIComponent(id)}/assign-employee`, 'POST', { employeeId }),
+  removeEmployee: (id, employeeId) => request(`/manager/${encodeURIComponent(id)}/assign-employee/${encodeURIComponent(employeeId)}`, 'DELETE'),
 }
 export const managerApi: ManagerApi = BASE_URL ? httpApi : mockApi
 export const usingMockApi = !BASE_URL

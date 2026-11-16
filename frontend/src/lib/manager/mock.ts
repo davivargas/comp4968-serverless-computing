@@ -94,4 +94,12 @@ export const mockApi: ManagerApi = {
     if (!alreadyAssigned) { state.assignments[id].push(employeeId); p.employeeCount++; save() }
     return result({ projectId: id, employeeId, alreadyAssigned })
   },
+  async removeEmployee(id, employeeId) {
+    const p = project(id)
+    if (!state.assignments[id].includes(employeeId)) throw new Error('That employee is not assigned to this project')
+    state.assignments[id] = state.assignments[id].filter(assignedId => assignedId !== employeeId)
+    p.employeeCount = state.assignments[id].length
+    // Existing timesheets are intentionally preserved, including submitted/approved flags.
+    save()
+  },
 }
