@@ -120,6 +120,19 @@ def test_every_route_requires_it_role(caller, db, cognito, method, resource):
     assert db.calls == [] and cognito.calls == []
 
 
+# ---- configuration ---------------------------------------------------
+
+def test_cognito_client_is_created_once(monkeypatch):
+    """The boto3 client is built on first use, then reused by later
+    calls in the same warm Lambda."""
+    made = []
+    monkeypatch.setattr(am, "_cognito", None)
+    monkeypatch.setattr(am.boto3, "client",
+                        lambda name: made.append(name) or object())
+    assert am.cognito() is am.cognito()
+    assert made == ["cognito-idp"]
+
+
 # ---- create account --------------------------------------------------
 
 def test_create_account_success(db, cognito, audits):
