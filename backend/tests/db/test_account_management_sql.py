@@ -81,3 +81,20 @@ def test_teams_list_counts_members(base):
     assert body["teams"] == [{"teamId": base.team, "name": "Platform",
                               "managerId": base.mei, "managerName": "Mei Test",
                               "memberCount": 1}]
+
+
+def test_team_rules_hold_against_real_rows(base):
+    """A name clash (any case) and deleting a team with members are both
+    refused; once Ana moves off the team it can be deleted."""
+    status, _ = call("POST", "/it/teams", body={"name": "platform",
+                                                "managerId": base.mei})
+    assert status == 409
+    route, path = "/it/teams/{id}", {"id": str(base.team)}
+    status, _ = call("PATCH", route, path=path, body={"isDeleted": True})
+    assert status == 409
+    call("PATCH", "/it/users/{id}", path={"id": str(base.ana)},
+         body={"teamId": None})
+    status, _ = call("PATCH", route, path=path, body={"isDeleted": True})
+    assert status == 204
+    status, body = call("GET", "/it/teams")
+    assert body["teams"] == []
