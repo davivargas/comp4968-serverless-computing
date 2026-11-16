@@ -542,6 +542,15 @@ def test_create_team_duplicate_name_is_409(db):
     assert status == 409 and db.ran("INSERT INTO team") == []
 
 
+def test_create_team_unknown_manager_is_400(db):
+    """A managerId with no employee row is a 400, not a foreign key
+    error from the INSERT."""
+    db.on("SELECT r.name AS role", None)
+    status, res = call("POST", "/it/teams", body={"name": "Ops", "managerId": 99})
+    assert status == 400 and "managerId 99 does not exist" in res["error"]
+    assert db.ran("INSERT INTO team") == []
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
