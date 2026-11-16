@@ -576,6 +576,17 @@ def test_update_team_name_taken_is_409(db):
     assert status == 409 and db.ran("UPDATE team") == []
 
 
+def test_update_team_new_manager_must_hold_manager_role(db):
+    """Handing a team to someone without the MANAGER role is refused,
+    the same as when creating a team."""
+    db.on("SELECT * FROM team WHERE team_id", TEAM_ROW)
+    db.on("SELECT r.name AS role", {"role": "IT"})
+    status, res = call("PATCH", "/it/teams/{id}", path={"id": "9"},
+                       body={"managerId": 1})
+    assert status == 400 and "Manager role" in res["error"]
+    assert db.ran("UPDATE team") == []
+
+
 def test_delete_team_with_members_is_409(db, audits):
     """A team that still has members can't be deleted; they must be
     moved first."""
