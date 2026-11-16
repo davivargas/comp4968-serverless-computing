@@ -39,3 +39,11 @@ def test_ensure_periods_is_safe_to_repeat(conn):
     payroll.ensure_periods(conn, day(40))
     rows = query(conn, "SELECT start_date FROM pay_period")
     assert sorted(r["start_date"] for r in rows) == [day(0), day(14), day(28)]
+
+
+def test_period_containing_finds_the_right_period(conn):
+    """A date in the middle of the 2nd period returns that period, and a
+    date before the anchor has none."""
+    period = payroll.period_containing(conn, day(20))
+    assert period["start_date"] == day(14)
+    assert payroll.period_containing(conn, day(-1)) is None
