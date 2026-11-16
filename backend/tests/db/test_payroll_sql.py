@@ -1,7 +1,10 @@
 import datetime
 
+import pytest
+
 from payroll_common import payroll
 from payroll_common.db import query
+from payroll_common.http_utils import HttpError
 from payroll_common.shapes import WAGE_JOIN
 
 """Tests for the SQL in payroll_common.payroll and shapes.WAGE_JOIN on a
@@ -47,3 +50,12 @@ def test_period_containing_finds_the_right_period(conn):
     period = payroll.period_containing(conn, day(20))
     assert period["start_date"] == day(14)
     assert payroll.period_containing(conn, day(-1)) is None
+
+
+def test_released_period_locks_its_dates(conn):
+    """Once a period is RELEASED, its dates can't be edited any more."""
+    payroll.ensure_periods(conn, day(0))
+    query(conn, "UPDATE pay_period SET status = 'RELEASED'")
+    with pytest.raises(HttpError) as err:
+        payroll.assert_date_editable(conn, day(3))
+    assert err.value.status == 409
