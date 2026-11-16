@@ -2,6 +2,7 @@ import datetime
 
 import pytest
 
+from helpers.pg import insert
 from payroll_common import payroll
 from payroll_common.db import query
 from payroll_common.http_utils import HttpError
@@ -16,9 +17,19 @@ fresh copy of the schema with a few committed rows (see conftest.py).
 """
 
 ANCHOR = datetime.date(2026, 1, 4)
+NINE, FIVE = datetime.time(9, 0), datetime.time(17, 0)
+
+
 def day(n):
     """The date n days after the first pay period starts."""
     return ANCHOR + datetime.timedelta(days=n)
+
+
+def log(conn, base, work_date, project=None, deleted=False):
+    """One 9-to-5 timesheet entry for Ana."""
+    insert(conn, "timesheet_entry", employee_id=base.ana,
+           project_id=project or base.project, work_date=work_date,
+           start_time=NINE, end_time=FIVE, is_deleted=deleted)
 
 
 # ---- pay periods -----------------------------------------------------
@@ -59,3 +70,16 @@ def test_released_period_locks_its_dates(conn):
     with pytest.raises(HttpError) as err:
         payroll.assert_date_editable(conn, day(3))
     assert err.value.status == 409
+
+
+# ---- sick days, stat holidays and wages ------------------------------
+
+def test_sick_dates_used_counts_only_live_sick_days(conn, base):
+    """Only this year's sick-project days count, once per day; deleted
+    entries and normal work don't."""
+    log(conn, base, day(1), project=base.sick)
+    log(conn, base, day(1), project=base.sick)
+    log(conn, base, day(2), project=base.sick, deleted=True)
+    log(conn, base, day(3))
+    log(conn, base, datetime.date(2025, 12, 30), project=base.sick)
+    assert payroll.sick_dates_used(conn, base.ana, 2026) == [day(1)]
