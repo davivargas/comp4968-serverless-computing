@@ -102,3 +102,15 @@ def test_year_to_date_adds_earlier_periods(conn, base, ctx):
     release_period(conn, second, ctx)
     s = stub(conn, second)
     assert s["ytd_gross"] == Decimal("400") and s["ytd_hours"] == Decimal("16")
+
+
+def test_deleted_entries_neither_block_nor_pay(conn, base, ctx):
+    """A deleted unapproved entry doesn't block release, and a deleted
+    approved one isn't paid."""
+    work(conn, base, FIRST + datetime.timedelta(days=1))
+    work(conn, base, FIRST + datetime.timedelta(days=2), approved=False,
+         deleted=True)
+    work(conn, base, FIRST + datetime.timedelta(days=3), deleted=True)
+    pid = period_id(conn, FIRST)
+    release_period(conn, pid, ctx)
+    assert stub(conn, pid)["regular_hours"] == Decimal("8")
