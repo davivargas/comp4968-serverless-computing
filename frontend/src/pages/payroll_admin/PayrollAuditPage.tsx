@@ -1,20 +1,48 @@
 import { ClipboardCheck, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import PageHeader from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { payrollAdminApi } from '@/lib/payroll_admin/api'
-import type { PayPeriod } from '@/lib/payroll_admin/types'
+import type { AuditLogEntry } from '@/lib/payroll_admin/types'
 
-type AuditEntry = { id: string; timestamp: string; action: string; actor: string; target: string; status: 'Completed' | 'Pending' }
-const formatDate = (value: string) => new Date(value).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' })
+const formatDate = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
 export default function PayrollAuditPage() {
-  const [periods, setPeriods] = useState<PayPeriod[]>([]); const [query, setQuery] = useState(''); const [action, setAction] = useState('all')
-  useEffect(() => { payrollAdminApi.listPayPeriods().then(setPeriods) }, [])
-  const entries = useMemo<AuditEntry[]>(() => periods.map((p) => ({ id: p.payPeriodId, timestamp: p.releasedAt ?? `${p.end}T17:00:00`, action: p.status === 'RELEASED' ? 'Payroll released' : 'Pay period reviewed', actor: 'Payroll Admin', target: `${p.start} – ${p.end}`, status: p.status === 'RELEASED' ? 'Completed' : 'Pending' })), [periods])
-  const filtered = entries.filter((entry) => (action === 'all' || entry.action === action) && (!query || `${entry.actor} ${entry.target} ${entry.action} ${entry.id}`.toLowerCase().includes(query.toLowerCase())))
-  return <div className="mx-auto max-w-[1200px]"><PageHeader title="Audit Log" description="Review payroll-administrator actions and pay-period activity." /><div className="mb-5 flex flex-wrap gap-2"><div className="relative min-w-64 flex-1 sm:max-w-md"><Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search audit activity..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><Select value={action} onValueChange={setAction}><SelectTrigger className="w-52"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All actions</SelectItem><SelectItem value="Payroll released">Payroll released</SelectItem><SelectItem value="Pay period reviewed">Pay period reviewed</SelectItem></SelectContent></Select></div><Card><Table><TableHeader><TableRow><TableHead>Timestamp</TableHead><TableHead>Action</TableHead><TableHead>Actor</TableHead><TableHead>Target</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{filtered.map((entry) => <TableRow key={entry.id}><TableCell className="text-muted-foreground">{formatDate(entry.timestamp)}</TableCell><TableCell className="font-medium"><span className="flex items-center gap-2"><ClipboardCheck className="size-4 text-primary" />{entry.action}</span></TableCell><TableCell>{entry.actor}</TableCell><TableCell>{entry.target}<div className="text-xs text-muted-foreground">{entry.id}</div></TableCell><TableCell><Badge variant={entry.status === 'Completed' ? 'secondary' : 'outline'}>{entry.status}</Badge></TableCell></TableRow>)}</TableBody></Table>{!filtered.length && <p className="p-8 text-center text-sm text-muted-foreground">No audit activity matches these filters.</p>}</Card><p className="mt-3 text-xs text-muted-foreground">Audit entries are derived from pay-period activity until a dedicated audit endpoint is available.</p></div>
+  const [logs, setLogs] = useState<AuditLogEntry[]>([])
+  const [query, setQuery] = useState('')
+  const [action, setAction] = useState('all')
+  const [from, setFrom] = useState(() => new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10))
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10))
+  const [nextToken, setNextToken] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async (token?: string, append = false) => {
+    setLoading(true); setError('')
+    try {
+      const result = await payrollAdminApi.listAuditLogs({ from, to, action: action === 'all' ? undefined : action, limit: 50, nextToken: token })
+      setLogs((existing) => append ? [...existing, ...result.logs] : result.logs)
+      setNextToken(result.nextToken)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not load audit activity.')
+      if (!append) setLogs([])
+    } finally { setLoading(false) }
+  }, [from, to, action])
+
+  useEffect(() => { void load() }, [load])
+  const filtered = logs.filter((entry) => !query || `${entry.auditId} ${entry.table} ${entry.recordId} ${entry.action} ${entry.changedByName ?? ''} ${entry.changedBy ?? ''}`.toLowerCase().includes(query.toLowerCase()))
+
+  return <div className="mx-auto max-w-[1200px]"><PageHeader title="Audit Log" description="Review recorded changes across payroll and employee records." /><div className="mb-5 flex flex-wrap gap-2"><div className="relative min-w-64 flex-1 sm:max-w-md"><Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" placeholder="Search audit activity..." value={query} onChange={(event) => setQuery(event.target.value)} /></div><Input aria-label="From date" type="date" className="w-40" value={from} onChange={(event) => setFrom(event.target.value)} /><Input aria-label="To date" type="date" className="w-40" value={to} onChange={(event) => setTo(event.target.value)} /><Select value={action} onValueChange={setAction}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All actions</SelectItem><SelectItem value="INSERT">Insert</SelectItem><SelectItem value="UPDATE">Update</SelectItem><SelectItem value="DELETE">Delete</SelectItem></SelectContent></Select></div>
+    {error && <Card className="mb-4 p-4 text-sm text-destructive" role="alert">Could not load audit logs: {error}</Card>}
+    <Card><Table><TableHeader><TableRow><TableHead>Timestamp</TableHead><TableHead>Action</TableHead><TableHead>Actor</TableHead><TableHead>Record</TableHead><TableHead>Changes</TableHead></TableRow></TableHeader><TableBody>{filtered.map((entry) => <TableRow key={entry.auditId}><TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(entry.changedAt)}</TableCell><TableCell><Badge variant={entry.action === 'DELETE' ? 'destructive' : 'secondary'}><ClipboardCheck className="mr-1 size-3" />{entry.action}</Badge></TableCell><TableCell>{entry.changedByName || (entry.changedBy == null ? 'System' : `Employee ${entry.changedBy}`)}</TableCell><TableCell><span className="font-medium">{entry.table}</span><div className="text-xs text-muted-foreground">ID: {entry.recordId}</div></TableCell><TableCell className="max-w-sm text-xs"><span className="text-muted-foreground">{entry.oldValues ? JSON.stringify(entry.oldValues) : '∅'}</span><span className="mx-1">→</span>{entry.newValues ? JSON.stringify(entry.newValues) : '∅'}</TableCell></TableRow>)}</TableBody></Table>{!loading && filtered.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">{error ? 'Audit activity is unavailable.' : 'No audit activity matches these filters.'}</p>}{loading && <p className="p-4 text-center text-sm text-muted-foreground">Loading audit activity…</p>}</Card>
+    {nextToken && <div className="mt-4 flex justify-center"><Button variant="outline" disabled={loading} onClick={() => void load(nextToken, true)}>{loading ? 'Loading…' : 'Load more'}</Button></div>}
+  </div>
 }

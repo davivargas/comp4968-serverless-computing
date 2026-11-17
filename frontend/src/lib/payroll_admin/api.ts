@@ -1,7 +1,7 @@
 import { apiError } from '@/lib/api-error'
 import { authHeaders } from '@/lib/auth'
 import { mockApi } from './mock'
-import type { CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position, StatHoliday } from './types'
+import type { AuditLogResult, CreatePositionInput, EmployeeFilters, EmployeeListResult, EmployeeRecord, PayAggregate, PayPeriod, PayrollEmployee, PayrollReleaseResult, PayStub, Position, StatHoliday } from './types'
 
 export interface PayrollAdminApi {
   listEmployees(filters?: EmployeeFilters): Promise<EmployeeListResult>
@@ -14,6 +14,7 @@ export interface PayrollAdminApi {
   listStatHolidays(year?: number): Promise<StatHoliday[]>
   addStatHoliday(holiday: StatHoliday): Promise<StatHoliday>
   deleteStatHoliday(date: string): Promise<void>
+  listAuditLogs(params?: { from?: string; to?: string; action?: string; table?: string; recordId?: string; limit?: number; nextToken?: string }): Promise<AuditLogResult>
 }
 
 const BASE_URL = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '') || undefined
@@ -95,6 +96,7 @@ const httpApi: PayrollAdminApi = {
   listStatHolidays: (year) => request<{ holidays: StatHoliday[] }>(`/stat-holidays${qs({ year })}`).then((r) => r.holidays),
   addStatHoliday: (holiday) => request<StatHoliday>(`${PA_BASE_PATH}/stat-holidays`, send('POST', holiday)),
   deleteStatHoliday: (date) => request<void>(`${PA_BASE_PATH}/stat-holidays/${date}`, { method: 'DELETE' }),
+  listAuditLogs: (params = {}) => request<AuditLogResult>(`/audit/logs${qs(params)}`),
 }
 
 export const payrollAdminApi: PayrollAdminApi = BASE_URL ? httpApi : mockApi

@@ -111,6 +111,20 @@ export interface PayrollReleaseResult {
 
 export interface StatHoliday { date: string; name: string }
 
+export interface AuditLogEntry {
+  auditId: string
+  table: string
+  recordId: string
+  action: 'INSERT' | 'UPDATE' | 'DELETE'
+  changedBy: number | null
+  changedByName: string | null
+  changedAt: string
+  oldValues: Record<string, unknown> | null
+  newValues: Record<string, unknown> | null
+}
+
+export interface AuditLogResult { logs: AuditLogEntry[]; nextToken: string | null }
+
 export interface CreatePositionInput {
   title: string
   payGrade: string
