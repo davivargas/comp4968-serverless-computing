@@ -48,7 +48,7 @@ type BackendEmployee = {
   project?: string | null
   email?: string | null
   phone?: string | null
-  address?: string | null
+  address?: string | { street?: string; city?: string; province?: string; postalCode?: string; country?: string } | null
   hireDate?: string
   managerId?: string | null
   managerName?: string | null
@@ -62,6 +62,11 @@ type BackendEmployee = {
 }
 
 const statusOf = (status: BackendEmployee['status']): PayrollEmployee['status'] => status === 'ACTIVE' ? 'active' : 'inactive'
+const formatAddress = (address: BackendEmployee['address']): string | null => {
+  if (typeof address === 'string') return address
+  if (!address) return null
+  return [address.street, address.city, address.province, address.postalCode, address.country].filter(Boolean).join(', ') || null
+}
 const normalizeEmployee = (employee: BackendEmployee): PayrollEmployee => ({
   id: String(employee.employeeId), employeeId: String(employee.employeeId), firstName: employee.firstName, lastName: employee.lastName,
   name: `${employee.firstName} ${employee.lastName}`, email: employee.email ?? null, position: employee.position, positionId: employee.positionId,
@@ -72,7 +77,7 @@ const normalizeEmployee = (employee: BackendEmployee): PayrollEmployee => ({
 const normalizeDetail = (result: { employee: BackendEmployee; aggregationPeriod: string; aggregate: PayAggregate; payStubs: PayStub[] }): EmployeeRecord => {
   const employee = normalizeEmployee(result.employee)
   return {
-    ...employee, email: result.employee.email ?? '', phone: result.employee.phone ?? null, address: result.employee.address ?? null,
+    ...employee, email: result.employee.email ?? '', phone: result.employee.phone ?? null, address: formatAddress(result.employee.address),
     hireDate: result.employee.hireDate ?? '', startDate: result.employee.hireDate ?? '', payGrade: result.employee.payGrade ?? '', totalHours: result.aggregate.hours,
     ytdGross: result.aggregate.gross, lastPayPeriod: result.aggregationPeriod, depositAccountLast4: result.employee.depositAccountLast4 ?? null,
     hourlyRate: result.employee.hourlyRate ?? 0, aggregate: result.aggregate, payStubs: result.payStubs,
