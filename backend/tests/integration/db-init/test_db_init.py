@@ -11,7 +11,7 @@ from helpers.lambdas import DB_DIR, load_lambda
 from payroll_common.http_utils import HttpError
 
 """Tests for the db-init Lambda, the one-off setup function invoked with
-{"action": "schema" | "seed" | "demo" | "reset"}.
+{"action": "schema" | "migrate" | "seed" | "demo" | "reset"}.
 
 Approach: a fake pg8000 connection answers SQL by text fragment and
 records every statement, commit and rollback; Cognito is faked too. The
@@ -112,7 +112,7 @@ def releases(monkeypatch):
 
 @pytest.mark.parametrize("event", [None, {}, {"action": "drop"}])
 def test_unknown_action_is_rejected(conn, event):
-    """Only the four known actions run; anything else is a 400 before
+    """Only the five known actions run; anything else is a 400 before
     the database is touched."""
     with pytest.raises(HttpError) as err:
         dbi.lambda_handler(event)
@@ -120,7 +120,8 @@ def test_unknown_action_is_rejected(conn, event):
 
 
 @pytest.mark.parametrize("action, step", [
-    ("schema", "load_schema"), ("seed", "seed_admin"),
+    ("schema", "load_schema"), ("migrate", "migrate_schema"),
+    ("seed", "seed_admin"),
     ("demo", "load_demo"), ("reset", "reset_demo"),
 ])
 def test_actions_dispatch_to_their_step(monkeypatch, action, step):
@@ -131,10 +132,11 @@ def test_actions_dispatch_to_their_step(monkeypatch, action, step):
 
 
 @pytest.mark.parametrize("event", [
-    {"action": "seed", **ADMIN}, {"action": "demo"}, {"action": "reset"},
+    {"action": "migrate"}, {"action": "seed", **ADMIN}, {"action": "demo"},
+    {"action": "reset"},
 ])
 def test_steps_need_the_schema_first(conn, cognito, event):
-    """Seed, demo and reset explain that the schema must be loaded first
+    """Migrate, seed, demo and reset explain that the schema must be loaded first
     instead of failing on a missing table."""
     tables_exist(conn)
     assert dbi.lambda_handler(event) == NEED_SCHEMA
@@ -181,6 +183,37 @@ def test_schema_failure_rolls_back(conn):
     conn.fail_on("CREATE TABLE", RuntimeError("syntax error"))
     with pytest.raises(RuntimeError):
         dbi.lambda_handler({"action": "schema"})
+    assert conn.rollbacks == 1 and conn.commits == 0
+
+
+# ---- migrate ---------------------------------------------------------
+
+def test_migrate_runs_migrate_sql_and_commits(conn):
+    """On a database without the auditor table the whole of migrate.sql
+    runs as one script and is committed; the response says what was added."""
+    result = dbi.lambda_handler({"action": "migrate"})
+    [(script, _)] = conn.executed
+    assert script == norm((DB_DIR / "migrate.sql").read_text("utf-8"))
+    assert conn.commits == 1
+    assert result == {"ok": True, "message": "Database is up to date.",
+                      "auditorTableAdded": True}
+
+
+def test_migrate_on_an_up_to_date_database_adds_nothing(conn):
+    """Running it again is allowed (the script is idempotent) and the
+    response says nothing was added."""
+    tables_exist(conn, "employee", "stat_holiday", "auditor")
+    result = dbi.lambda_handler({"action": "migrate"})
+    assert result["ok"] is True and result["auditorTableAdded"] is False
+    assert conn.commits == 1
+
+
+def test_migrate_failure_rolls_back(conn):
+    """A failing migration is rolled back and the error re-raised, so the
+    invoke shows as failed and the database is left as it was."""
+    conn.fail_on("CREATE TABLE", RuntimeError("syntax error"))
+    with pytest.raises(RuntimeError):
+        dbi.lambda_handler({"action": "migrate"})
     assert conn.rollbacks == 1 and conn.commits == 0
 
 

@@ -53,6 +53,25 @@ def load_schema():
     return {"ok": True, "message": "Schema loaded.", "tables": tables}
 
 
+def migrate_schema():
+    conn = get_conn()
+    if not _exists(conn, "employee"):
+        return {"ok": False, "message": "Load the schema first (action: schema)."}
+    had_auditor = _exists(conn, "auditor")
+    with open(_here("migrate.sql"), encoding="utf-8") as f:
+        script = f.read()
+    cur = conn.cursor()
+    try:
+        cur.execute(script)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+    return {"ok": True, "message": "Database is up to date.", "auditorTableAdded": not had_auditor}
+
+
 def ensure_special_projects(cur, created_by):
     cur.execute("SELECT project_code FROM project WHERE special_type IS NULL AND project_code BETWEEN 9001 AND 9003")
     clash = [r[0] for r in cur.fetchall()]
@@ -304,9 +323,11 @@ def reset_demo(event):
 
 def lambda_handler(event, context=None):
     action = (event or {}).get("action")
-    one_of(action, "action", ["schema", "seed", "demo", "reset"])
+    one_of(action, "action", ["schema", "migrate", "seed", "demo", "reset"])
     if action == "schema":
         return load_schema()
+    if action == "migrate":
+        return migrate_schema()
     if action == "seed":
         return seed_admin(event)
     if action == "reset":

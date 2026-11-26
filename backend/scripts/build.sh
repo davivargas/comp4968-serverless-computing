@@ -13,5 +13,5 @@ for f in functions/*/; do
   name=$(basename "$f")
   (cd "$f" && zip -qr "../../dist/$name.zip" lambda_function.py)
 done
-zip -qj dist/db-init.zip db/schema.sql db/demo_data.sql db/demo_timesheets.csv db/demo_manifest.json   # db-init carries copies of the schema and demo data
+zip -qj dist/db-init.zip db/schema.sql db/migrate.sql db/demo_data.sql db/demo_timesheets.csv db/demo_manifest.json   # db-init carries copies of the schema and demo data
 ls -la dist
