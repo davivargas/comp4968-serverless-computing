@@ -1,5 +1,5 @@
 import AccountMenu from '@/components/auth/AccountMenu'
-import { CalendarDays, ClipboardCheck, FileText, LayoutDashboard, Users, WalletCards } from 'lucide-react'
+import { CalendarDays, FileText, LayoutDashboard, Users, WalletCards } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Separator } from '@/components/ui/separator'
@@ -17,7 +17,6 @@ const NAV = [
   { to: '/payroll/directory', label: 'Employee Directory', icon: Users },
   { to: '/payroll/records', label: 'Employee Records', icon: FileText },
   { to: '/payroll/releases', label: 'Payroll Releases', icon: WalletCards },
-  { to: '/payroll/audit', label: 'Audit Log', icon: ClipboardCheck },
   { to: '/payroll/stat-holidays', label: 'Stat Holidays', icon: CalendarDays },
 ]
 
