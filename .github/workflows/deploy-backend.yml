@@ -56,15 +56,6 @@ jobs:
       - uses: aws-actions/setup-sam@v2
         with:
           use-installer: true
-      - name: Show OIDC subject (temporary)
-        run: |
-          curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
-          | python3 -c "
-          import sys,json,base64
-          t=json.load(sys.stdin)['value'].split('.')[1]
-          t+='='*(-len(t)%4)
-          print(json.loads(base64.urlsafe_b64decode(t))['sub'])"
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::477223649878:role/GitHubDeploy-Timely

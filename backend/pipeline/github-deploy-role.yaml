@@ -15,6 +15,14 @@ Parameters:
   Branch:
     Type: String
     Default: main
+  GitHubOwnerId:
+    Type: String
+    Default: "59944975"
+    Description: Numeric ID of the GitHub owner. Newer GitHub tokens include it in the subject claim (repo:owner@id/name@id:...).
+  GitHubRepoId:
+    Type: String
+    Default: "1396593638"
+    Description: Numeric ID of the GitHub repository (same reason as above).
   DeployedStackName:
     Type: String
     Default: Timely
@@ -57,7 +65,9 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${Branch}
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${Branch}
+                  - !Sub repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/${Branch}
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess
       Policies:
