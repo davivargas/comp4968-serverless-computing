@@ -1,0 +1,19 @@
+# Settings for `sam deploy`, read automatically from this folder.
+# Manual deploy (CloudShell):  sam deploy                      (asks you to confirm the change set)
+# GitHub Actions:              sam deploy --config-env ci      (no prompts)
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "Timely"
+region = "us-west-2"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+confirm_changeset = true
+
+[ci.deploy.parameters]
+stack_name = "Timely"
+region = "us-west-2"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+confirm_changeset = false
+fail_on_empty_changeset = false
