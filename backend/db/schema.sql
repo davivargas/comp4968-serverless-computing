@@ -44,6 +44,18 @@ ALTER TABLE team ADD CONSTRAINT team_manager_fk FOREIGN KEY (manager_id) REFEREN
 CREATE INDEX employee_team_idx ON employee(team_id);
 CREATE INDEX employee_position_idx ON employee(position_id);
 
+CREATE TABLE auditor (
+  auditor_id  INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cognito_sub VARCHAR(64)  NOT NULL UNIQUE,
+  first_name  VARCHAR(100) NOT NULL,
+  last_name   VARCHAR(100) NOT NULL,
+  email       VARCHAR(255) NOT NULL UNIQUE,
+  status      VARCHAR(12)  NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','DEACTIVATED')),
+  created_by  INT NOT NULL REFERENCES employee(employee_id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE position_wage (
   wage_id        INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   position_id    INT NOT NULL REFERENCES position(position_id),

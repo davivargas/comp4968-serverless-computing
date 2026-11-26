@@ -17,13 +17,13 @@ database stays consistent even if a Lambda forgets a check.
 TABLES = {"role", "position", "team", "employee", "position_wage",
           "direct_deposit", "project", "project_assignment",
           "timesheet_entry", "stat_holiday", "pay_period", "paystub",
-          "paystub_earning"}
+          "paystub_earning", "auditor"}
 MON = datetime.date(2026, 1, 5)
 NINE, FIVE = datetime.time(9, 0), datetime.time(17, 0)
 
 
 def test_schema_creates_every_table(conn):
-    """schema.sql builds all 13 tables in the public schema."""
+    """schema.sql builds all 14 tables in the public schema."""
     rows = query(conn, "SELECT table_name FROM information_schema.tables "
                        "WHERE table_schema = 'public'")
     assert {r["table_name"] for r in rows} == TABLES

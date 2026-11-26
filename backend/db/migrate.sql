@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS auditor (
+  auditor_id  INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cognito_sub VARCHAR(64)  NOT NULL UNIQUE,
+  first_name  VARCHAR(100) NOT NULL,
+  last_name   VARCHAR(100) NOT NULL,
+  email       VARCHAR(255) NOT NULL UNIQUE,
+  status      VARCHAR(12)  NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','DEACTIVATED')),
+  created_by  INT NOT NULL REFERENCES employee(employee_id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

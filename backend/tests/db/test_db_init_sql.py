@@ -42,10 +42,10 @@ def count(conn, sql):
 
 
 def test_schema_action_loads_schema_once(empty_conn):
-    """On an empty database the schema action creates all 13 tables; a
+    """On an empty database the schema action creates all 14 tables; a
     second run changes nothing."""
     assert dbi.lambda_handler({"action": "schema"}) == {
-        "ok": True, "message": "Schema loaded.", "tables": 13}
+        "ok": True, "message": "Schema loaded.", "tables": 14}
     again = dbi.lambda_handler({"action": "schema"})
     assert again["ok"] is False and "already loaded" in again["message"]
 
