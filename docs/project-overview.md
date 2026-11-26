@@ -11,7 +11,7 @@ React Router defines the landing page, mock login, and role-specific portal rout
 | `frontend/src/pages/employee` | Time entry/submission, earnings dashboard, pay stubs, profile |
 | `frontend/src/pages/it` | Account creation, roles, titles, status, credentials |
 | `frontend/src/pages/manager` | Team timesheet review, projects and assignments, team directory |
-| `frontend/src/pages/payroll_admin` | Payroll dashboard, employee directory and records, payroll releases, audit log, positions, and stat holidays |
+| `frontend/src/pages/payroll_admin` | Payroll dashboard, employee directory and records, payroll releases, positions, and stat holidays |
 | `frontend/src/lib/{employee,it,manager}` | Typed API contracts, mock implementations, placeholder sessions, domain helpers |
 | `frontend/src/lib/payroll_admin` | Payroll Admin API types/client, mock data, and domain helpers |
 | `frontend/src/components/ui` | Shared Radix/shadcn-style controls, cards, tables, sidebar, dialogs, charts |
@@ -36,8 +36,9 @@ operate on whole employee pay periods. Project management includes creation, ren
 restricted soft deletion, viewing assignments, and assigning active team members or the manager.
 Its seeded data persists in `mock.manager.v1` in localStorage.
 
-Payroll Admin has Dashboard, Employee Directory, Employee Records, Payroll Releases, Audit Log,
-Positions, and Stat Holidays views under `/payroll`. The employee views support period-aware pay
+Payroll Admin has Dashboard, Employee Directory, Employee Records, Payroll Releases, Positions, and
+Stat Holidays views under `/payroll`. The Dashboard summarizes employee and current pay-period
+readiness metrics; there is no Payroll Admin Audit Log page or route. The employee views support period-aware pay
 aggregation and filters. Payroll Releases displays periods and release eligibility and calls the
 period release endpoint; positions and stat holidays use their documented management endpoints.
 The mock implementation supports local portal workflows when `VITE_API_BASE_URL` is not configured.
