@@ -436,15 +436,29 @@ def test_load_wages_groups_history_by_position(fake_db):
     assert sorted(ids) == [3, 4]
 
 
-def test_today_bc_uses_the_vancouver_date(monkeypatch):
-    """Cut-offs use BC's date, not UTC: at 07:30 UTC on Jan 1 it is
-    still Dec 31 in Vancouver."""
+def frozen_now(monkeypatch, *moment):
+    """Freezes datetime.now() at the given UTC moment."""
     class FrozenDatetime(datetime.datetime):
         @classmethod
         def now(cls, tz=None):
             utc = datetime.timezone.utc
-            moment = datetime.datetime(2026, 1, 1, 7, 30, tzinfo=utc)
-            return moment.astimezone(tz)
+            return datetime.datetime(*moment, tzinfo=utc).astimezone(tz)
 
     monkeypatch.setattr(payroll.datetime, "datetime", FrozenDatetime)
+
+
+def test_today_bc_uses_the_vancouver_date(monkeypatch):
+    """Cut-offs use BC's date, not UTC: at 06:30 UTC on Jan 1 it is
+    still Dec 31 in BC (UTC-7)."""
+    frozen_now(monkeypatch, 2026, 1, 1, 6, 30)
     assert payroll.today_bc() == datetime.date(2025, 12, 31)
+    frozen_now(monkeypatch, 2026, 1, 1, 7, 30)
+    assert payroll.today_bc() == datetime.date(2026, 1, 1)
+
+
+def test_bc_offset_is_fixed_all_year():
+    """BC no longer changes its clocks: winter and summer are both
+    UTC-7, whatever time zone database the runtime has."""
+    for month in (1, 7, 11):
+        moment = datetime.datetime(2026, month, 15, 12, tzinfo=payroll.BC_TZ)
+        assert moment.utcoffset() == datetime.timedelta(hours=-7)

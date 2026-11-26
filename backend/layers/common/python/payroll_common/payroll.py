@@ -2,7 +2,6 @@ import datetime
 import os
 from collections import defaultdict
 from fractions import Fraction
-from zoneinfo import ZoneInfo
 
 from dateutil.relativedelta import relativedelta
 
@@ -11,6 +10,10 @@ from .db import one, query
 from .http_utils import HttpError
 
 ZERO = Fraction(0)
+
+# British Columbia stays on UTC-7 all year since 2026-11-01. A fixed offset (not the "America/Vancouver" name)
+# gives the same answer even if the runtime's time zone database is older than that change.
+BC_TZ = datetime.timezone(datetime.timedelta(hours=-7), "PT")
 
 
 def cfg():
@@ -21,7 +24,7 @@ def cfg():
 
 
 def today_bc():
-    return datetime.datetime.now(ZoneInfo("America/Vancouver")).date()
+    return datetime.datetime.now(BC_TZ).date()
 
 
 def F(x):

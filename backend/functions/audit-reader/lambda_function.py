@@ -2,18 +2,17 @@ import base64
 import datetime
 import json
 import os
-from zoneinfo import ZoneInfo
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 
 from payroll_common.auth import with_auth
 from payroll_common.http_utils import qs, router
-from payroll_common.payroll import today_bc
+from payroll_common.payroll import BC_TZ, today_bc
 from payroll_common.validate import bad, one_of, opt_date, opt_int, require_int, require_str
 
 _table = None
-VAN, UTC = ZoneInfo("America/Vancouver"), datetime.timezone.utc
+UTC = datetime.timezone.utc
 
 
 def table():
@@ -39,8 +38,8 @@ def logs(event, ctx):
         bad("from must not be after to")
     if (to - frm).days > 366:
         bad("The date range can be at most 366 days")
-    lo = datetime.datetime.combine(frm, datetime.time.min, tzinfo=VAN).astimezone(UTC)
-    hi = datetime.datetime.combine(to + datetime.timedelta(days=1), datetime.time.min, tzinfo=VAN).astimezone(UTC)
+    lo = datetime.datetime.combine(frm, datetime.time.min, tzinfo=BC_TZ).astimezone(UTC)
+    hi = datetime.datetime.combine(to + datetime.timedelta(days=1), datetime.time.min, tzinfo=BC_TZ).astimezone(UTC)
     lo_s, hi_s = lo.isoformat(timespec="microseconds"), hi.isoformat(timespec="microseconds")
     limit = require_int(q.get("limit", 50), "limit")
     if not 1 <= limit <= 200:

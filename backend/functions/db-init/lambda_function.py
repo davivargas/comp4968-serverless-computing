@@ -168,9 +168,9 @@ def _load_timesheet_csv(cur):
     cur.execute("""INSERT INTO timesheet_entry (employee_id, project_id, work_date, start_time, end_time, submitted, submitted_at,
                                                 approved, reviewed_by, reviewed_at)
                    SELECT e.employee_id, pr.project_id, v.d, v.a, v.b, v.st IN ('approved', 'submitted'),
-                          CASE WHEN v.st IN ('approved', 'submitted') THEN v.sub AT TIME ZONE 'America/Vancouver' END,
+                          CASE WHEN v.st IN ('approved', 'submitted') THEN (v.sub + INTERVAL '7 hours') AT TIME ZONE 'UTC' END,
                           v.st = 'approved', CASE WHEN v.st = 'approved' THEN t.manager_id END,
-                          CASE WHEN v.st = 'approved' THEN v.rev AT TIME ZONE 'America/Vancouver' END
+                          CASE WHEN v.st = 'approved' THEN (v.rev + INTERVAL '7 hours') AT TIME ZONE 'UTC' END
                      FROM demo_ts v JOIN employee e ON e.email = v.email JOIN project pr ON pr.project_code = v.code
                      JOIN team t ON t.team_id = e.team_id""")
     if cur.rowcount != len(rows):
