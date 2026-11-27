@@ -12,11 +12,14 @@ import { cognitoUserPoolsTokenProvider } from 'aws-amplify/auth/cognito'
 import { sessionStorage } from 'aws-amplify/utils'
 import { apiError } from '@/lib/api-error'
 
-export type Role = 'EMPLOYEE' | 'MANAGER' | 'PAYROLL_ADMIN' | 'IT'
+export type Role = 'EMPLOYEE' | 'MANAGER' | 'PAYROLL_ADMIN' | 'IT' | 'AUDITOR'
 
 /** GET /me: who is signed in and which portals they can open. */
 export interface Me {
+  /** Empty for external auditors, who have no employee record. */
   employeeId: string
+  /** Set only for external auditors. */
+  auditorId?: string
   firstName: string
   lastName: string
   availableRoles: Role[]
@@ -156,11 +159,24 @@ export function authErrorMessage(e: unknown): string {
 }
 
 export async function fetchMe(): Promise<Me> {
-  // Everyone holds EMPLOYEE, so it's always a valid role to ask with.
-  const res = await fetch(`${API_BASE_URL}/me`, { headers: { ...(await authHeaders()), 'X-Active-Role': 'EMPLOYEE' } })
+  // Every employee holds EMPLOYEE, so it's always a valid role to ask with. External auditors hold only
+  // AUDITOR and get a 403 for it, so ask again as an auditor before giving up.
+  let res = await meRequest('EMPLOYEE')
+  if (res.status === 403) {
+    const asAuditor = await meRequest('AUDITOR')
+    if (asAuditor.ok) res = asAuditor
+  }
   if (!res.ok) throw await apiError(res)
-  const me = (await res.json()) as Omit<Me, 'employeeId'> & { employeeId: string | number }
-  return { ...me, employeeId: String(me.employeeId) }
+  const me = (await res.json()) as Omit<Me, 'employeeId' | 'auditorId'> & { employeeId: string | number | null; auditorId?: string | number }
+  return {
+    ...me,
+    employeeId: me.employeeId == null ? '' : String(me.employeeId),
+    auditorId: me.auditorId == null ? undefined : String(me.auditorId),
+  }
+}
+
+async function meRequest(role: Role): Promise<Response> {
+  return fetch(`${API_BASE_URL}/me`, { headers: { ...(await authHeaders()), 'X-Active-Role': role } })
 }
 
 /** Stand-in user for mock mode: can open every portal. */
@@ -168,5 +184,5 @@ export const MOCK_ME: Me = {
   employeeId: 'E1001',
   firstName: 'Alex',
   lastName: 'Morgan',
-  availableRoles: ['EMPLOYEE', 'MANAGER', 'PAYROLL_ADMIN', 'IT'],
+  availableRoles: ['EMPLOYEE', 'MANAGER', 'PAYROLL_ADMIN', 'IT', 'AUDITOR'],
 }
