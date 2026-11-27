@@ -942,6 +942,12 @@ Resources:
             RestApiId: !Ref Api
             Path: "/audit/logs"
             Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/audit/employees"
+            Method: get
 
   DbInitFunction:
     Type: AWS::Serverless::Function

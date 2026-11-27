@@ -7,6 +7,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 
 from payroll_common.auth import with_auth
+from payroll_common.db import get_conn, query
 from payroll_common.http_utils import qs, router
 from payroll_common.payroll import BC_TZ, today_bc
 from payroll_common.validate import bad, one_of, opt_date, opt_int, require_int, require_str
@@ -93,4 +94,19 @@ def logs(event, ctx):
     return {"logs": out, "nextToken": base64.urlsafe_b64encode(json.dumps(next_token).encode()).decode() if next_token else None}
 
 
-lambda_handler = router({"GET /audit/logs": with_auth(["IT", "PAYROLL_ADMIN"], logs)})
+def search_employees(event, ctx):
+    q = qs(event)
+    text = require_str(q.get("search"), "search", 100)
+    limit = require_int(q.get("limit", 20), "limit")
+    if not 1 <= limit <= 50:
+        bad("limit must be between 1 and 50")
+    like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = query(get_conn(), """SELECT employee_id, first_name, last_name, email FROM employee
+                                 WHERE first_name || ' ' || last_name ILIKE %s OR email ILIKE %s
+                                 ORDER BY last_name, first_name, employee_id LIMIT %s""", (like, like, limit))
+    return {"employees": [{"employeeId": r["employee_id"], "firstName": r["first_name"], "lastName": r["last_name"], "email": r["email"]}
+                          for r in rows]}
+
+
+lambda_handler = router({"GET /audit/logs": with_auth(["IT", "PAYROLL_ADMIN", "AUDITOR"], logs),
+                         "GET /audit/employees": with_auth(["AUDITOR"], search_employees)})
