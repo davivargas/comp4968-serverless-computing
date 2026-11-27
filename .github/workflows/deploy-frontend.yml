@@ -1,0 +1,119 @@
+# Checks the frontend on every push and pull request that touches frontend/.
+# On a push to main it builds the app against the Timely stack and publishes it to S3 + CloudFront.
+# It also runs after each successful backend deploy, since that is what creates (or changes) the bucket,
+# the distribution and the Cognito/API settings the build reads.
+#
+# Nothing here is secret: the build settings (API URL, Cognito pool and client IDs) end up in the public
+# JavaScript anyway, so they are read from the stack's outputs at build time instead of being stored.
+name: Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_run:
+    workflows: [Backend]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  STACK_NAME: Timely
+  AWS_REGION: us-west-2
+
+jobs:
+  check:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:ui # component tests (vitest, tests/**/*.test.tsx)
+      - run: npm run test:ui:types # type-checks the tests themselves
+      - run: npm run test:manager # manager workflow checks against the mock API
+      - run: npm run build # type-checks the app too (tsc -b); uses the in-browser mocks since no API URL is set
+
+  deploy:
+    needs: check
+    # needs: check is skipped for workflow_run, so allow a skipped check there (but only after a backend success).
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.check.result == 'success'))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-frontend
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::477223649878:role/GitHubDeploy-Timely
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read build settings from the stack outputs
+        run: |
+          out() {
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          bucket=$(out WebBucketName)
+          if [ -z "$bucket" ] || [ "$bucket" = "None" ]; then
+            echo "::error::The $STACK_NAME stack has no WebBucketName output yet. Deploy the backend first."
+            exit 1
+          fi
+          {
+            echo "WEB_BUCKET=$bucket"
+            echo "WEB_DISTRIBUTION_ID=$(out WebDistributionId)"
+            echo "WEBSITE_URL=$(out WebsiteUrl)"
+            echo "VITE_API_BASE_URL=$(out WebApiUrl)"
+            echo "VITE_COGNITO_USER_POOL_ID=$(out UserPoolId)"
+            echo "VITE_COGNITO_CLIENT_ID=$(out UserPoolClientId)"
+          } >> "$GITHUB_ENV"
+
+      - run: npm ci
+      - run: npm run build
+
+      # Hashed files under assets/ never change, so browsers may keep them for a year. index.html must
+      # always be re-checked, or visitors would keep loading the previous build's asset names.
+      - name: Upload to S3
+        run: |
+          aws s3 sync dist/assets "s3://$WEB_BUCKET/assets" --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync dist "s3://$WEB_BUCKET" --exclude "assets/*" --exclude index.html --cache-control "public,max-age=300"
+          aws s3 cp dist/index.html "s3://$WEB_BUCKET/index.html" --cache-control "no-cache"
+          aws s3 sync dist "s3://$WEB_BUCKET" --delete
+
+      - name: Refresh CloudFront
+        run: |
+          aws cloudfront create-invalidation --distribution-id "$WEB_DISTRIBUTION_ID" --paths "/*" \
+            --query "Invalidation.Id" --output text
+          echo "### Deployed to $WEBSITE_URL" >> "$GITHUB_STEP_SUMMARY"
