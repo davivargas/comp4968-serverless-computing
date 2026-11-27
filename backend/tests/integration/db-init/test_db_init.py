@@ -30,12 +30,14 @@ NEED_SCHEMA = {"ok": False, "message": "Load the schema first (action: schema)."
 ADMIN = {"email": "Ivy@Example.com", "firstName": "Ivy", "lastName": "Tran"}
 PEOPLE = [(2, "ana@test.com", "Ana", "Lee"), (3, "bo@test.com", "Bo", "Kim")]
 EMAILS = ["ana@test.com", "bo@test.com"]
+AUDITOR = MANIFEST["auditors"][0]
+LOGINS = EMAILS + [AUDITOR["email"]]
 PERIOD = {"pay_period_id": 11, "start_date": datetime.date(2026, 9, 13)}
 PREVIEW = {"demo_people": 2, "timesheet_entries": 40, "demo_pay_stubs": 6,
            "other_pay_stubs": 0, "released_pay_periods": 3}
 RESET_ORDER = [
     "paystub_earning", "paystub", "pay_period", "timesheet_entry",
-    "project_assignment", "direct_deposit", "project", "employee", "team",
+    "project_assignment", "auditor", "auditor", "direct_deposit", "project", "employee", "team",
     "employee", "position_wage", "position",
 ]
 
@@ -78,7 +80,7 @@ def conn(monkeypatch):
     """Fake connection behind get_conn/one/query: schema loaded
     (employee and stat_holiday exist), no rows. Files load from db/."""
     fake = FakeDB()
-    tables_exist(fake, "employee", "stat_holiday")
+    tables_exist(fake, "employee", "stat_holiday", "auditor")
     monkeypatch.setattr(dbi, "get_conn", lambda: fake)
     monkeypatch.setattr(dbi, "one", fake.one)
     monkeypatch.setattr(dbi, "query", fake.query)
@@ -191,6 +193,7 @@ def test_schema_failure_rolls_back(conn):
 def test_migrate_runs_migrate_sql_and_commits(conn):
     """On a database without the auditor table the whole of migrate.sql
     runs as one script and is committed; the response says what was added."""
+    tables_exist(conn, "employee", "stat_holiday")
     result = dbi.lambda_handler({"action": "migrate"})
     [(script, _)] = conn.executed
     assert script == norm((DB_DIR / "migrate.sql").read_text("utf-8"))
@@ -202,7 +205,6 @@ def test_migrate_runs_migrate_sql_and_commits(conn):
 def test_migrate_on_an_up_to_date_database_adds_nothing(conn):
     """Running it again is allowed (the script is idempotent) and the
     response says nothing was added."""
-    tables_exist(conn, "employee", "stat_holiday", "auditor")
     result = dbi.lambda_handler({"action": "migrate"})
     assert result["ok"] is True and result["auditorTableAdded"] is False
     assert conn.commits == 1
@@ -321,9 +323,11 @@ def test_demo_loads_everything_in_one_commit(conn, cognito, releases):
     assert conn.executed[0][0] == norm(DEMO_SQL)
     chunks = math.ceil(len(CSV_ROWS) / 400)
     assert len(conn.ran("INSERT INTO demo_ts")) == chunks
-    assert cognito.users("admin_create_user") == EMAILS
+    assert cognito.users("admin_create_user") == LOGINS
     subs = [params for _, params in conn.ran("UPDATE employee SET cognito_sub")]
     assert subs == [("sub-ana@test.com", 2), ("sub-bo@test.com", 3)]
+    [(_, auditor)] = conn.ran("INSERT INTO auditor")
+    assert auditor == ("sub-auditor@test.com", AUDITOR["firstName"], AUDITOR["lastName"], AUDITOR["email"])
     [release] = releases
     assert release["period_id"] == 11 and release["audit"] is False
     assert release["ctx"]["employee_id"] == 3
@@ -340,7 +344,7 @@ def test_demo_logins_work_without_an_invite(conn, cognito):
     created = cognito.kwargs("admin_create_user")
     assert all(kw["MessageAction"] == "SUPPRESS" for kw in created)
     passwords = cognito.kwargs("admin_set_user_password")
-    assert [kw["Username"] for kw in passwords] == EMAILS
+    assert [kw["Username"] for kw in passwords] == LOGINS
     assert all(kw["Password"] == dbi.DEMO_PASSWORD for kw in passwords)
     assert all(kw["Permanent"] is True for kw in passwords)
 
@@ -453,7 +457,7 @@ def test_demo_release_failure_undoes_everything(conn, cognito, monkeypatch):
     result = dbi.lambda_handler({"action": "demo"})
     assert result["ok"] is False and "Could not release" in result["message"]
     assert conn.commits == 0
-    assert cognito.users("admin_delete_user") == EMAILS
+    assert cognito.users("admin_delete_user") == LOGINS
 
 
 def test_demo_unexpected_error_cleans_up_then_raises(conn, cognito):
@@ -476,7 +480,7 @@ def test_demo_cleanup_continues_past_a_failed_delete(conn, cognito):
     cognito.errors[("admin_delete_user", "ana@test.com")] = failure
     with pytest.raises(RuntimeError, match="db down"):
         dbi.lambda_handler({"action": "demo"})
-    assert cognito.users("admin_delete_user") == EMAILS
+    assert cognito.users("admin_delete_user") == LOGINS
 
 
 def test_demo_ignores_a_failed_final_cursor_close(conn, monkeypatch):
@@ -524,7 +528,7 @@ def test_reset_deletes_children_first_then_logins(conn, cognito):
     targets = [re.match(pattern, sql).group(1) for sql, _ in conn.executed]
     assert targets == RESET_ORDER
     assert conn.commits == 1 and result["ok"]
-    assert cognito.users("admin_delete_user") == MANIFEST["emails"]
+    assert cognito.users("admin_delete_user") == MANIFEST["emails"] + [AUDITOR["email"]]
 
 
 def test_reset_failure_keeps_cognito_logins(conn, cognito):
