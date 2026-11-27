@@ -494,6 +494,120 @@ Resources:
             ThrottlingRateLimit: 25,
           }
 
+  # ---------------------------------------------------------------- web app hosting
+  # The built React app lives in a private bucket that only CloudFront can read. CloudFront serves it over
+  # HTTPS and also forwards /prod/* to API Gateway, so the app and the API share one origin (no CORS needed).
+  # .github/workflows/deploy-frontend.yml builds the app and uploads it here.
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontReadOnly
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
+
+  WebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-web"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Page URLs such as /auditor/logs only exist inside the React app: serve index.html for any path without
+  # a file extension. (Custom error pages would do the same, but would also swallow the API's own 403/404s.)
+  WebSpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-spa-rewrite"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for app routes
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          if (request.uri.indexOf('.') === -1) request.uri = '/index.html';
+          return request;
+        }
+
+  # Never caches API responses (they carry no Cache-Control, so the 0s default applies). Authorization and
+  # X-Active-Role are in the key because that's how CloudFront is made to forward Authorization at all.
+  ApiCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${AWS::StackName}-api-no-cache"
+        DefaultTTL: 0
+        MinTTL: 0
+        MaxTTL: 1
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers: [Authorization, X-Active-Role]
+          CookiesConfig: { CookieBehavior: none }
+          QueryStringsConfig: { QueryStringBehavior: all }
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${AWS::StackName} web app"
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Origins:
+          - Id: web
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt WebOriginAccessControl.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: api
+            DomainName: !Sub "${Api}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized (honours the upload's Cache-Control)
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt WebSpaRewrite.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /prod/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            Compress: true
+            CachePolicyId: !Ref ApiCachePolicy
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+
   # ---------------------------------------------------------------- Lambda
   CommonLayer:
     Type: AWS::Serverless::LayerVersion
@@ -1203,3 +1317,15 @@ Outputs:
     Value: !Ref TimesheetReminderFunction
   NotificationQueueUrl:
     Value: !Ref NotificationQueue
+  WebsiteUrl:
+    Description: The web app (CloudFront)
+    Value: !Sub "https://${WebDistribution.DomainName}"
+  WebApiUrl:
+    Description: API base URL for the web app's build (VITE_API_BASE_URL) - the API through CloudFront, same origin as the app
+    Value: !Sub "https://${WebDistribution.DomainName}/prod"
+  WebBucketName:
+    Description: Bucket the frontend workflow uploads the built app to
+    Value: !Ref WebBucket
+  WebDistributionId:
+    Description: CloudFront distribution to invalidate after each frontend deploy
+    Value: !Ref WebDistribution
