@@ -5,6 +5,8 @@ import RequireRole from '@/components/auth/RequireRole'
 import { PORTALS } from '@/lib/portals'
 import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
+import AuditLogPage from '@/pages/auditor/AuditLogPage'
+import AuditorLayout from '@/pages/auditor/AuditorLayout'
 import DashboardITPage from '@/pages/it/DashboardPage'
 import ITLayout from '@/pages/it/ITLayout'
 import TeamsPage from '@/pages/it/TeamsPage'
@@ -61,6 +63,10 @@ export default function App() {
           <Route path="timesheets" element={<ManagerTimesheetsPage />} />
           <Route path="projects" element={<ManagerProjectsPage />} />
           <Route path="team" element={<ManagerTeamPage />} />
+        </Route>
+        <Route path="/auditor" element={<Guard portalId="auditor"><AuditorLayout /></Guard>}>
+          <Route index element={<Navigate to="logs" replace />} />
+          <Route path="logs" element={<AuditLogPage />} />
         </Route>
         <Route path="*" element={<LandingPage />} />
       </Routes>
