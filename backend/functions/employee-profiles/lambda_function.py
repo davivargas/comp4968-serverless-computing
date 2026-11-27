@@ -23,8 +23,11 @@ def _kms_encrypt(plaintext):
 
 
 def get_me(event, ctx):
-    return {"employeeId": ctx["employee_id"], "firstName": ctx["first_name"], "lastName": ctx["last_name"],
-            "availableRoles": ctx["available"]}
+    me = {"employeeId": ctx["employee_id"], "firstName": ctx["first_name"], "lastName": ctx["last_name"],
+          "availableRoles": ctx["available"]}
+    if ctx.get("auditor_id"):
+        me["auditorId"] = ctx["auditor_id"]
+    return me
 
 
 def _profile(conn, emp_id):
