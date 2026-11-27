@@ -536,6 +536,36 @@ Resources:
             RestApiId: !Ref Api
             Path: "/it/positions"
             Method: get
+        Route12:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors"
+            Method: post
+        Route13:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors"
+            Method: get
+        Route14:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}"
+            Method: get
+        Route15:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}/status"
+            Method: patch
+        Route16:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}/reset-password"
+            Method: post
 
   EmployeeTimesheetsFunction:
     Type: AWS::Serverless::Function

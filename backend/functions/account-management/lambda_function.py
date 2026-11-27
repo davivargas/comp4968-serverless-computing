@@ -307,6 +307,102 @@ def list_positions(event, ctx):
     return {"positions": [{"positionId": r["position_id"], "title": r["title"], "payGrade": r["pay_grade"]} for r in rows]}
 
 
+AUDITOR_SELECT = "SELECT auditor_id, first_name, last_name, email, status FROM auditor"
+
+
+def auditor_json(r):
+    return {"auditorId": r["auditor_id"], "firstName": r["first_name"], "lastName": r["last_name"], "email": r["email"],
+            "status": r["status"], "role": "AUDITOR"}
+
+
+def get_auditor(conn, auditor_id):
+    r = one(conn, f"{AUDITOR_SELECT} WHERE auditor_id = %s", (auditor_id,))
+    if not r:
+        raise HttpError(404, "Auditor not found")
+    return auditor_json(r)
+
+
+def create_auditor(event, ctx):
+    b = parse_body(event)
+    first, last = require_str(b.get("firstName"), "firstName", 100), require_str(b.get("lastName"), "lastName", 100)
+    email = require_email(b.get("email"))
+    conn = get_conn()
+    if one(conn, "SELECT 1 AS x FROM employee WHERE email = %s", (email,)) or one(conn, "SELECT 1 AS x FROM auditor WHERE email = %s", (email,)):
+        raise HttpError(409, "An account with that email already exists")
+    try:
+        out = cognito().admin_create_user(
+            UserPoolId=pool(), Username=email, DesiredDeliveryMediums=["EMAIL"],
+            UserAttributes=[{"Name": "email", "Value": email}, {"Name": "email_verified", "Value": "true"},
+                            {"Name": "given_name", "Value": first}, {"Name": "family_name", "Value": last}])
+        sub = next(a["Value"] for a in out["User"]["Attributes"] if a["Name"] == "sub")
+    except cognito().exceptions.UsernameExistsException:
+        raise HttpError(409, "That email already exists in the user pool")
+    try:
+        with transaction() as conn:
+            row = one(conn, """INSERT INTO auditor (cognito_sub, first_name, last_name, email, created_by)
+                               VALUES (%s, %s, %s, %s, %s) RETURNING auditor_id""", (sub, first, last, email, ctx["employee_id"]))
+            audit(conn, ctx, "auditor", row["auditor_id"], "INSERT", None, {"first_name": first, "last_name": last, "email": email})
+            out_auditor = get_auditor(conn, row["auditor_id"])
+    except BaseException:
+        try:
+            cognito().admin_delete_user(UserPoolId=pool(), Username=sub)
+        except Exception as e:
+            print("Cognito cleanup failed", e)
+        raise
+    return created(out_auditor)
+
+
+def list_auditors(event, ctx):
+    q = qs(event)
+    where, p = [], []
+    if q.get("status"):
+        p.append(one_of(q["status"], "status", ["ACTIVE", "DEACTIVATED"]))
+        where.append("status = %s")
+    if q.get("search"):
+        p += [f"%{q['search']}%", f"%{q['search']}%"]
+        where.append("(first_name || ' ' || last_name ILIKE %s OR email ILIKE %s)")
+    limit, offset = paging(q)
+    order = order_by(q, {"id": "auditor_id", "name": "last_name, first_name", "email": "email"}, "id")
+    rows = query(get_conn(), f"""SELECT a.*, COUNT(*) OVER()::int AS total_count FROM ({AUDITOR_SELECT}) a
+                                  {'WHERE ' + ' AND '.join(where) if where else ''} {order} LIMIT %s OFFSET %s""", p + [limit, offset])
+    return {"total": rows[0]["total_count"] if rows else 0, "limit": limit, "offset": offset, "auditors": [auditor_json(r) for r in rows]}
+
+
+def get_one_auditor(event, ctx):
+    return get_auditor(get_conn(), path_id(event))
+
+
+def set_auditor_status(event, ctx):
+    auditor_id = path_id(event)
+    status = one_of(parse_body(event).get("status"), "status", ["ACTIVE", "DEACTIVATED"])
+    with transaction() as conn:
+        old = one(conn, "SELECT status, cognito_sub FROM auditor WHERE auditor_id = %s FOR UPDATE", (auditor_id,))
+        if not old:
+            raise HttpError(404, "Auditor not found")
+        if old["status"] != status:
+            query(conn, "UPDATE auditor SET status = %s, updated_at = now() WHERE auditor_id = %s", (status, auditor_id))
+            if status == "DEACTIVATED":
+                cognito().admin_disable_user(UserPoolId=pool(), Username=old["cognito_sub"])
+                cognito().admin_user_global_sign_out(UserPoolId=pool(), Username=old["cognito_sub"])
+            else:
+                cognito().admin_enable_user(UserPoolId=pool(), Username=old["cognito_sub"])
+            audit(conn, ctx, "auditor", auditor_id, "UPDATE", {"status": old["status"]}, {"status": status})
+        return get_auditor(conn, auditor_id)
+
+
+def reset_auditor_password(event, ctx):
+    auditor_id = path_id(event)
+    conn = get_conn()
+    a = get_auditor(conn, auditor_id)
+    if a["status"] != "ACTIVE":
+        raise HttpError(409, "Cannot reset the password of a deactivated account")
+    sub = one(conn, "SELECT cognito_sub FROM auditor WHERE auditor_id = %s", (auditor_id,))["cognito_sub"]
+    cognito().admin_reset_user_password(UserPoolId=pool(), Username=sub)
+    with transaction() as c:
+        audit(c, ctx, "auditor", auditor_id, "UPDATE", None, {"password": "reset initiated"})
+    return {"message": "Password reset initiated"}
+
+
 lambda_handler = router({
     "POST /it/create-account": with_auth(IT, create_account),
     "GET /it/users": with_auth(IT, list_users),
@@ -319,4 +415,9 @@ lambda_handler = router({
     "POST /it/teams": with_auth(IT, create_team),
     "PATCH /it/teams/{id}": with_auth(IT, update_team),
     "GET /it/positions": with_auth(IT, list_positions),
+    "POST /it/auditors": with_auth(IT, create_auditor),
+    "GET /it/auditors": with_auth(IT, list_auditors),
+    "GET /it/auditors/{id}": with_auth(IT, get_one_auditor),
+    "PATCH /it/auditors/{id}/status": with_auth(IT, set_auditor_status),
+    "POST /it/auditors/{id}/reset-password": with_auth(IT, reset_auditor_password),
 })
