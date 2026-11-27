@@ -81,14 +81,15 @@ interaction testing or authenticated backend integration tests.
 
 ## Deployment
 
-Two GitHub Actions workflows deploy to the `Timely` stack in us-west-2:
+Two GitHub Actions workflows, each deploying its own CloudFormation stack in us-west-2:
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `Backend` (`deploy-backend.yml`) | changes under `backend/` | pytest, then `sam deploy` of `backend/template.yaml`, which also owns the web bucket and CloudFront |
-| `Frontend` (`deploy-frontend.yml`) | changes under `frontend/`, and after each successful backend deploy | lint, UI tests, manager checks and build; on `main`, builds against the stack and publishes to S3 + CloudFront |
+| `Backend` (`deploy-backend.yml`) | changes under `backend/` | pytest, then `sam deploy` of `backend/template.yaml` (stack `Timely`: API, Lambdas, database, Cognito) |
+| `Frontend` (`deploy-frontend.yml`) | changes under `frontend/`, and after each successful backend deploy | lint, UI tests, manager checks and build; on `main`, deploys `frontend/infra/template.yaml` (stack `TimelyWeb`: S3 bucket + CloudFront), then builds against both stacks and publishes the app |
 
-The built app sits in a private S3 bucket behind CloudFront (stack output `WebsiteUrl`). CloudFront also
+Keeping the hosting in its own stack means a backend template change can't delete the site.
+The built app sits in a private S3 bucket behind CloudFront (`TimelyWeb` stack output `WebsiteUrl`). CloudFront also
 forwards `/prod/*` to API Gateway, so the deployed app calls the API on its own origin (`WebApiUrl`).
 The build settings (`VITE_API_BASE_URL`, `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`) are read
 from the stack outputs during the deploy; they are public values, so there are no secrets to store.
