@@ -70,6 +70,19 @@ Parameters:
       Optional. ARN of a verified SES identity (e.g. arn:aws:ses:us-west-2:123456789012:identity/payroll@example.com).
       When set, Cognito sends invite emails through SES. Leave empty to use Cognito's built-in email (small daily limit).
 
+  ReminderSenderEmail:
+    Type: String
+    Default: group1.timely.demo@gmail.com
+    Description: >
+      Address the reminder emails are sent from. It must be verified in Amazon SES (SES console, Identities,
+      Create identity, then click the link SES emails to that address). Verify it once; it is not part of this stack.
+  ReminderRedirectEmail:
+    Type: String
+    Default: group1.timely.demo@gmail.com
+    Description: >
+      Every reminder is sent to this one address (the intended person is named in the subject). While SES is in sandbox
+      mode it must also be verified. Leave empty to send each reminder to the person's own email address (needs SES production access).
+
 Conditions:
   Protect: !Equals [!Ref DeletionProtection, "true"]
   EndpointsBoth: !Equals [!Ref EndpointsInBothAZs, "true"]
@@ -211,6 +224,21 @@ Resources:
           [!Ref PrivateSubnetA],
         ]
 
+  SnsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sns"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
+
   CognitoIdpEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -333,6 +361,48 @@ Resources:
       PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
       DeletionProtectionEnabled: !If [Protect, true, false]
 
+  # ---------------------------------------------------------------- reminders
+  ReminderTopic:
+    Type: AWS::SNS::Topic
+
+  NotificationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  NotificationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref NotificationQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: sns.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotificationQueue.Arn
+            Condition:
+              ArnEquals: { "aws:SourceArn": !Ref ReminderTopic }
+
+  ReminderSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: NotificationQueuePolicy
+    Properties:
+      TopicArn: !Ref ReminderTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotificationQueue.Arn
+      RawMessageDelivery: true
+
   # ---------------------------------------------------------------- sign-in
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -423,120 +493,6 @@ Resources:
             ThrottlingBurstLimit: 50,
             ThrottlingRateLimit: 25,
           }
-
-  # ---------------------------------------------------------------- web app hosting
-  # The built React app lives in a private bucket that only CloudFront can read. CloudFront serves it over
-  # HTTPS and also forwards /prod/* to API Gateway, so the app and the API share one origin (no CORS needed).
-  # .github/workflows/deploy-frontend.yml builds the app and uploads it here.
-  WebBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      OwnershipControls:
-        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
-
-  WebBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref WebBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: CloudFrontReadOnly
-            Effect: Allow
-            Principal: { Service: cloudfront.amazonaws.com }
-            Action: s3:GetObject
-            Resource: !Sub "${WebBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
-
-  WebOriginAccessControl:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${AWS::StackName}-web"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  # Page URLs such as /auditor/logs only exist inside the React app: serve index.html for any path without
-  # a file extension. (Custom error pages would do the same, but would also swallow the API's own 403/404s.)
-  WebSpaRewrite:
-    Type: AWS::CloudFront::Function
-    Properties:
-      Name: !Sub "${AWS::StackName}-spa-rewrite"
-      AutoPublish: true
-      FunctionConfig:
-        Comment: Serve index.html for app routes
-        Runtime: cloudfront-js-2.0
-      FunctionCode: |
-        function handler(event) {
-          var request = event.request;
-          if (request.uri.indexOf('.') === -1) request.uri = '/index.html';
-          return request;
-        }
-
-  # Never caches API responses (they carry no Cache-Control, so the 0s default applies). Authorization and
-  # X-Active-Role are in the key because that's how CloudFront is made to forward Authorization at all.
-  ApiCachePolicy:
-    Type: AWS::CloudFront::CachePolicy
-    Properties:
-      CachePolicyConfig:
-        Name: !Sub "${AWS::StackName}-api-no-cache"
-        DefaultTTL: 0
-        MinTTL: 0
-        MaxTTL: 1
-        ParametersInCacheKeyAndForwardedToOrigin:
-          EnableAcceptEncodingGzip: true
-          EnableAcceptEncodingBrotli: true
-          HeadersConfig:
-            HeaderBehavior: whitelist
-            Headers: [Authorization, X-Active-Role]
-          CookiesConfig: { CookieBehavior: none }
-          QueryStringsConfig: { QueryStringBehavior: all }
-
-  WebDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Comment: !Sub "${AWS::StackName} web app"
-        Enabled: true
-        HttpVersion: http2and3
-        PriceClass: PriceClass_100
-        DefaultRootObject: index.html
-        Origins:
-          - Id: web
-            DomainName: !GetAtt WebBucket.RegionalDomainName
-            OriginAccessControlId: !GetAtt WebOriginAccessControl.Id
-            S3OriginConfig: { OriginAccessIdentity: "" }
-          - Id: api
-            DomainName: !Sub "${Api}.execute-api.${AWS::Region}.amazonaws.com"
-            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
-        DefaultCacheBehavior:
-          TargetOriginId: web
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD]
-          Compress: true
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized (honours the upload's Cache-Control)
-          FunctionAssociations:
-            - EventType: viewer-request
-              FunctionARN: !GetAtt WebSpaRewrite.FunctionMetadata.FunctionARN
-        CacheBehaviors:
-          - PathPattern: /prod/*
-            TargetOriginId: api
-            ViewerProtocolPolicy: https-only
-            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
-            Compress: true
-            CachePolicyId: !Ref ApiCachePolicy
-            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
 
   # ---------------------------------------------------------------- Lambda
   CommonLayer:
@@ -1093,6 +1049,75 @@ Resources:
             Path: "/audit/employees"
             Method: get
 
+  TimesheetReminderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/timesheet-reminder.zip
+      Description: timesheet-reminder
+      Timeout: 60
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          REMINDER_TOPIC_ARN: !Ref ReminderTopic
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref ReminderTopic
+      Events:
+        # 9:00 AM in BC (UTC-7 all year) is 16:00 UTC. Friday: employees, Monday: managers, Tuesday: Payroll Admins.
+        # The function only sends on the right Friday/Monday/Tuesday of a pay period; the other weeks it does nothing.
+        EmployeesFriday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * FRI *)"
+            Input: '{"role": "EMPLOYEE", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+        ManagersMonday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * MON *)"
+            Input: '{"role": "MANAGER", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+        PayrollAdminsTuesday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * TUE *)"
+            Input: '{"role": "PAYROLL_ADMIN", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+
+  NotificationWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/notification-worker.zip
+      Description: notification-worker
+      Timeout: 30
+      Environment:
+        Variables:
+          SENDER_EMAIL: !Ref ReminderSenderEmail
+          REDIRECT_TO: !Ref ReminderRedirectEmail
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+      Events:
+        NotificationQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt NotificationQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
+
   DbInitFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1173,15 +1198,8 @@ Outputs:
     Value: !Ref AuditTable
   DepositKeyArn:
     Value: !GetAtt DepositKey.Arn
-  WebsiteUrl:
-    Description: The web app (CloudFront)
-    Value: !Sub "https://${WebDistribution.DomainName}"
-  WebApiUrl:
-    Description: API base URL for the web app's build (VITE_API_BASE_URL) - the API through CloudFront, same origin as the app
-    Value: !Sub "https://${WebDistribution.DomainName}/prod"
-  WebBucketName:
-    Description: Bucket the frontend workflow uploads the built app to
-    Value: !Ref WebBucket
-  WebDistributionId:
-    Description: CloudFront distribution to invalidate after each frontend deploy
-    Value: !Ref WebDistribution
+  TimesheetReminderFunctionName:
+    Description: Invoke by hand to send a reminder now, e.g. payload {"role":"EMPLOYEE"} (MANAGER and PAYROLL_ADMIN also work)
+    Value: !Ref TimesheetReminderFunction
+  NotificationQueueUrl:
+    Value: !Ref NotificationQueue
