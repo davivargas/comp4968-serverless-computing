@@ -78,3 +78,19 @@ Manager checks exercise filters, pagination, whole-period review guards and tran
 project deletion/closing rules, assignment eligibility/idempotence, and persistence writes. They use
 an in-memory localStorage stand-in and do not modify browser demo data. They do not replace browser
 interaction testing or authenticated backend integration tests.
+
+## Deployment
+
+Two GitHub Actions workflows deploy to the `Timely` stack in us-west-2:
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `Backend` (`deploy-backend.yml`) | changes under `backend/` | pytest, then `sam deploy` of `backend/template.yaml`, which also owns the web bucket and CloudFront |
+| `Frontend` (`deploy-frontend.yml`) | changes under `frontend/`, and after each successful backend deploy | lint, UI tests, manager checks and build; on `main`, builds against the stack and publishes to S3 + CloudFront |
+
+The built app sits in a private S3 bucket behind CloudFront (stack output `WebsiteUrl`). CloudFront also
+forwards `/prod/*` to API Gateway, so the deployed app calls the API on its own origin (`WebApiUrl`).
+The build settings (`VITE_API_BASE_URL`, `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`) are read
+from the stack outputs during the deploy; they are public values, so there are no secrets to store.
+For local development, `.env.local` still points at the API Gateway URL directly.
+
