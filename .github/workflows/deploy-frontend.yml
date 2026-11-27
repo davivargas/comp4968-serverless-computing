@@ -1,7 +1,7 @@
 # Checks the frontend on every push and pull request that touches frontend/.
-# On a push to main it builds the app against the Timely stack and publishes it to S3 + CloudFront.
-# It also runs after each successful backend deploy, since that is what creates (or changes) the bucket,
-# the distribution and the Cognito/API settings the build reads.
+# On a push to main it deploys the TimelyWeb stack (frontend/infra/template.yaml: S3 bucket + CloudFront),
+# builds the app against the backend's Timely stack and publishes it there.
+# It also runs after each successful backend deploy, since that can change the Cognito/API settings the build reads.
 #
 # Nothing here is secret: the build settings (API URL, Cognito pool and client IDs) end up in the public
 # JavaScript anyway, so they are read from the stack's outputs at build time instead of being stored.
@@ -27,7 +27,8 @@ permissions:
   contents: read
 
 env:
-  STACK_NAME: Timely
+  STACK_NAME: Timely # backend: API, Cognito
+  WEB_STACK_NAME: TimelyWeb # frontend hosting: bucket, CloudFront
   AWS_REGION: us-west-2
 
 jobs:
@@ -44,6 +45,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - run: pipx run cfn-lint infra/template.yaml
       - run: npm ci
       - run: npm run lint
       - run: npm run test:ui # component tests (vitest, tests/**/*.test.tsx)
@@ -80,24 +82,33 @@ jobs:
           role-to-assume: arn:aws:iam::477223649878:role/GitHubDeploy-Timely
           aws-region: ${{ env.AWS_REGION }}
 
+      # CloudFront forwards /prod/* to the backend's API Gateway, so the hosting stack needs the API's ID:
+      # the host part of the backend's ApiUrl output (https://<id>.execute-api.<region>.amazonaws.com/prod).
+      - name: Deploy the hosting stack
+        run: |
+          api_url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          api_id=$(echo "$api_url" | sed -n 's|^https://\([a-z0-9]*\)\.execute-api\..*|\1|p')
+          if [ -z "$api_id" ]; then
+            echo "::error::Could not read the API ID from the $STACK_NAME stack's ApiUrl output ('$api_url'). Deploy the backend first."
+            exit 1
+          fi
+          aws cloudformation deploy --template-file infra/template.yaml --stack-name "$WEB_STACK_NAME" \
+            --parameter-overrides "ApiId=$api_id" --no-fail-on-empty-changeset
+
       - name: Read build settings from the stack outputs
         run: |
           out() {
-            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
-              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+            aws cloudformation describe-stacks --stack-name "$1" \
+              --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text
           }
-          bucket=$(out WebBucketName)
-          if [ -z "$bucket" ] || [ "$bucket" = "None" ]; then
-            echo "::error::The $STACK_NAME stack has no WebBucketName output yet. Deploy the backend first."
-            exit 1
-          fi
           {
-            echo "WEB_BUCKET=$bucket"
-            echo "WEB_DISTRIBUTION_ID=$(out WebDistributionId)"
-            echo "WEBSITE_URL=$(out WebsiteUrl)"
-            echo "VITE_API_BASE_URL=$(out WebApiUrl)"
-            echo "VITE_COGNITO_USER_POOL_ID=$(out UserPoolId)"
-            echo "VITE_COGNITO_CLIENT_ID=$(out UserPoolClientId)"
+            echo "WEB_BUCKET=$(out "$WEB_STACK_NAME" WebBucketName)"
+            echo "WEB_DISTRIBUTION_ID=$(out "$WEB_STACK_NAME" WebDistributionId)"
+            echo "WEBSITE_URL=$(out "$WEB_STACK_NAME" WebsiteUrl)"
+            echo "VITE_API_BASE_URL=$(out "$WEB_STACK_NAME" WebApiUrl)"
+            echo "VITE_COGNITO_USER_POOL_ID=$(out "$STACK_NAME" UserPoolId)"
+            echo "VITE_COGNITO_CLIENT_ID=$(out "$STACK_NAME" UserPoolClientId)"
           } >> "$GITHUB_ENV"
 
       - run: npm ci
