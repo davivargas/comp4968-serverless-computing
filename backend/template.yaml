@@ -70,6 +70,27 @@ Parameters:
       Optional. ARN of a verified SES identity (e.g. arn:aws:ses:us-west-2:123456789012:identity/payroll@example.com).
       When set, Cognito sends invite emails through SES. Leave empty to use Cognito's built-in email (small daily limit).
 
+  ReminderSenderEmail:
+    Type: String
+    Default: group1.timely.demo@gmail.com
+    Description: >
+      Address the reminder emails are sent from. It must be verified in Amazon SES (SES console, Identities,
+      Create identity, then click the link SES emails to that address). Verify it once; it is not part of this stack.
+  ReminderRedirectEmail:
+    Type: String
+    Default: group1.timely.demo@gmail.com
+    Description: >
+      Every reminder is sent to this one address (the intended person is named in the subject). While SES is in sandbox
+      mode it must also be verified. Leave empty to send each reminder to the person's own email address (needs SES production access).
+  AlertEmail:
+    Type: String
+    Default: group1.timely.demo@gmail.com
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: Must be one email address.
+    Description: >
+      One shared inbox for the IT admins. CloudWatch alarms (the app or a part of it is failing) send an email here.
+      After the first deploy AWS emails this address a "Confirm subscription" link; someone has to click it once.
+
 Conditions:
   Protect: !Equals [!Ref DeletionProtection, "true"]
   EndpointsBoth: !Equals [!Ref EndpointsInBothAZs, "true"]
@@ -211,6 +232,21 @@ Resources:
           [!Ref PrivateSubnetA],
         ]
 
+  SnsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sns"
+      PrivateDnsEnabled: true
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      SubnetIds:
+        !If [
+          EndpointsBoth,
+          [!Ref PrivateSubnetA, !Ref PrivateSubnetB],
+          [!Ref PrivateSubnetA],
+        ]
+
   CognitoIdpEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -333,6 +369,48 @@ Resources:
       PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
       DeletionProtectionEnabled: !If [Protect, true, false]
 
+  # ---------------------------------------------------------------- reminders
+  ReminderTopic:
+    Type: AWS::SNS::Topic
+
+  NotificationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 180
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  NotificationQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref NotificationQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: sns.amazonaws.com }
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotificationQueue.Arn
+            Condition:
+              ArnEquals: { "aws:SourceArn": !Ref ReminderTopic }
+
+  ReminderSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: NotificationQueuePolicy
+    Properties:
+      TopicArn: !Ref ReminderTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotificationQueue.Arn
+      RawMessageDelivery: true
+
   # ---------------------------------------------------------------- sign-in
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -393,6 +471,7 @@ Resources:
   Api:
     Type: AWS::Serverless::Api
     Properties:
+      Name: !Sub "${AWS::StackName}-api"
       StageName: prod
       EndpointConfiguration: { Type: REGIONAL }
       Auth:
@@ -536,6 +615,36 @@ Resources:
             RestApiId: !Ref Api
             Path: "/it/positions"
             Method: get
+        Route12:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors"
+            Method: post
+        Route13:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors"
+            Method: get
+        Route14:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}"
+            Method: get
+        Route15:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}/status"
+            Method: patch
+        Route16:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/it/auditors/{id}/reset-password"
+            Method: post
 
   EmployeeTimesheetsFunction:
     Type: AWS::Serverless::Function
@@ -942,6 +1051,81 @@ Resources:
             RestApiId: !Ref Api
             Path: "/audit/logs"
             Method: get
+        Route02:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: "/audit/employees"
+            Method: get
+
+  TimesheetReminderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/timesheet-reminder.zip
+      Description: timesheet-reminder
+      Timeout: 60
+      Layers: [!Ref CommonLayer]
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecret
+          DB_NAME: !Ref DbName
+          REMINDER_TOPIC_ARN: !Ref ReminderTopic
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref DbSecret
+        - Statement:
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref ReminderTopic
+      Events:
+        # 9:00 AM in BC (UTC-7 all year) is 16:00 UTC. Friday: employees, Monday: managers, Tuesday: Payroll Admins.
+        # The function only sends on the right Friday/Monday/Tuesday of a pay period; the other weeks it does nothing.
+        EmployeesFriday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * FRI *)"
+            Input: '{"role": "EMPLOYEE", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+        ManagersMonday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * MON *)"
+            Input: '{"role": "MANAGER", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+        PayrollAdminsTuesday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 16 ? * TUE *)"
+            Input: '{"role": "PAYROLL_ADMIN", "scheduled": true}'
+            RetryPolicy: { MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600 }
+
+  NotificationWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/notification-worker.zip
+      Description: notification-worker
+      Timeout: 30
+      Environment:
+        Variables:
+          SENDER_EMAIL: !Ref ReminderSenderEmail
+          REDIRECT_TO: !Ref ReminderRedirectEmail
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+      Events:
+        NotificationQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt NotificationQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
 
   DbInitFunction:
     Type: AWS::Serverless::Function
@@ -993,6 +1177,430 @@ Resources:
             BatchSize: 10
             FunctionResponseTypes: [ReportBatchItemFailures]
 
+  # ---------------------------------------------------------------- alerts
+  # CloudWatch alarms email one shared IT inbox (parameter AlertEmail) when something fails. The topic is separate from
+  # the reminder topic and is not encrypted with an AWS-managed key, because CloudWatch cannot publish to such a topic.
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Timely alerts
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlertsTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal: { Service: cloudwatch.amazonaws.com }
+            Action: sns:Publish
+            Resource: !Ref AlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  AlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ApiServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "The API returned a 5XX error (something failed inside the app) in the last 5 minutes"
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "${AWS::StackName}-api"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  ApiSlowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "API responses are slow: the 95th percentile has been over 5 seconds for 15 minutes"
+      Namespace: AWS/ApiGateway
+      MetricName: Latency
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "${AWS::StackName}-api"
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 5000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  AccountManagementErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "AccountManagement Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AccountManagementFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  EmployeeTimesheetsErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "EmployeeTimesheets Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EmployeeTimesheetsFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  ManagerTimesheetsErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "ManagerTimesheets Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ManagerTimesheetsFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  EmployeeProfilesErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "EmployeeProfiles Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EmployeeProfilesFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  ProjectManagementErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "ProjectManagement Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProjectManagementFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  PayrollProcessingErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "PayrollProcessing Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PayrollProcessingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  EmployeePayErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "EmployeePay Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EmployeePayFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  PayrollReportingErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "PayrollReporting Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PayrollReportingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  AuditReaderErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "AuditReader Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AuditReaderFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  TimesheetReminderErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "TimesheetReminder Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref TimesheetReminderFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  NotificationWorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "NotificationWorker Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref NotificationWorkerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  AuditWriterErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "AuditWriter Lambda failed (an error or a timeout) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AuditWriterFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "A Lambda function was throttled (too many calls at once) in the last 5 minutes"
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  AuditDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "A change could not be written to the audit log and is waiting in the audit dead-letter queue"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AuditDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  NotificationDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "A reminder email could not be sent and is waiting in the notification dead-letter queue"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt NotificationDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  ReminderScheduleErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "An EventBridge schedule could not start the reminder function"
+      Namespace: AWS/Scheduler
+      MetricName: TargetErrorCount
+      Dimensions:
+        - Name: ScheduleGroup
+          Value: default
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  DbCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "The database CPU has been over 80% for 15 minutes"
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DbInstance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  DbStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "The database has less than 2 GB of free storage"
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DbInstance
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2147483648
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  DbMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "The database has had less than 100 MB of free memory for 15 minutes"
+      Namespace: AWS/RDS
+      MetricName: FreeableMemory
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DbInstance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 104857600
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  DbConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "The database has more than 60 open connections (db.t4g.micro allows about 80)"
+      Namespace: AWS/RDS
+      MetricName: DatabaseConnections
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DbInstance
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 60
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
 Outputs:
   ApiUrl:
     Description: Base URL for the web app (stage prod)
@@ -1023,3 +1631,11 @@ Outputs:
     Value: !Ref AuditTable
   DepositKeyArn:
     Value: !GetAtt DepositKey.Arn
+  TimesheetReminderFunctionName:
+    Description: Invoke by hand to send a reminder now, e.g. payload {"role":"EMPLOYEE"} (MANAGER and PAYROLL_ADMIN also work)
+    Value: !Ref TimesheetReminderFunction
+  NotificationQueueUrl:
+    Value: !Ref NotificationQueue
+  AlertsTopicArn:
+    Description: SNS topic the CloudWatch alarms publish to (emails AlertEmail). Click the confirmation link AWS emails to that address once.
+    Value: !Ref AlertsTopic
