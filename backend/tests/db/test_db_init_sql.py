@@ -22,6 +22,7 @@ dbi = load_lambda("db-init")
 MANIFEST = json.loads((DB_DIR / "demo_manifest.json").read_text("utf-8"))
 with open(DB_DIR / "demo_timesheets.csv", encoding="utf-8", newline="") as f:
     CSV_ROWS = sum(1 for _ in csv.DictReader(f))
+AUDITOR_EMAILS = [a["email"] for a in MANIFEST["auditors"]]
 ADMIN = {"email": "ivy@example.com", "firstName": "Ivy", "lastName": "Tran"}
 TODAY = datetime.date.fromisoformat(MANIFEST["release_before"])
 
@@ -77,9 +78,32 @@ def test_demo_loads_every_file_and_releases_periods(conn, setup):
     assert released == result["releasedPayPeriods"] > 0
     assert result["pay_stubs"] == count(conn, "paystub") > 0
     assert sorted(setup.users("admin_set_user_password")) == sorted(
-        MANIFEST["emails"])
+        MANIFEST["emails"] + AUDITOR_EMAILS)
     assert count(conn, "employee WHERE cognito_sub LIKE 'sub-%@test.com'") \
         == len(MANIFEST["emails"])
+
+
+def test_demo_adds_the_auditor_as_a_separate_login(conn, setup):
+    """auditor@test.com gets a Cognito login and a row in the auditor
+    table, created by the first admin, and is not an employee."""
+    dbi.lambda_handler({"action": "seed", **ADMIN})
+    dbi.lambda_handler({"action": "demo"})
+    row = one(conn, "SELECT * FROM auditor")
+    assert row["email"] == "auditor@test.com" and row["status"] == "ACTIVE"
+    assert row["cognito_sub"] == "sub-auditor@test.com"
+    assert row["created_by"] == one(conn, "SELECT min(employee_id) AS n FROM employee")["n"]
+    assert count(conn, "employee WHERE email = 'auditor@test.com'") == 0
+
+
+def test_demo_refuses_a_database_without_the_auditor_table(conn, setup):
+    """Before migrate has run, demo says so instead of failing halfway."""
+    dbi.lambda_handler({"action": "seed", **ADMIN})
+    cur = conn.cursor()
+    cur.execute("DROP TABLE auditor")
+    conn.commit()
+    result = dbi.lambda_handler({"action": "demo"})
+    assert result["ok"] is False and "auditor table" in result["message"]
+    assert setup.names() == ["admin_create_user"]  # only the admin made by seed
 
 
 def test_reset_removes_only_the_demo_data(conn, setup):
@@ -95,4 +119,23 @@ def test_reset_removes_only_the_demo_data(conn, setup):
     assert count(conn, "paystub") == 0 and count(conn, "timesheet_entry") == 0
     assert count(conn, "pay_period WHERE status = 'RELEASED'") == 0
     assert count(conn, "project") == 3
-    assert sorted(setup.users("admin_delete_user")) == sorted(MANIFEST["emails"])
+    assert sorted(setup.users("admin_delete_user")) == sorted(
+        MANIFEST["emails"] + AUDITOR_EMAILS)
+    assert count(conn, "auditor") == 0
+
+
+def test_reset_removes_an_auditor_made_through_the_api(conn, setup):
+    """An auditor@test.com created by IT (not by the demo load) is removed
+    too, and an auditor created by a demo person is kept, with the
+    creator changed to a person who stays."""
+    dbi.lambda_handler({"action": "seed", **ADMIN})
+    dbi.lambda_handler({"action": "demo"})
+    admin = one(conn, "SELECT min(employee_id) AS n FROM employee")["n"]
+    demo_person = one(conn, "SELECT employee_id AS n FROM employee WHERE email = 'ben.ng@test.com'")["n"]
+    cur = conn.cursor()
+    cur.execute("INSERT INTO auditor (cognito_sub, first_name, last_name, email, created_by) "
+                "VALUES ('sub-ext', 'Ext', 'Auditor', 'ext@firm.com', %s)", (demo_person,))
+    conn.commit()
+    assert dbi.lambda_handler({"action": "reset", "confirm": True})["ok"]
+    row = one(conn, "SELECT email, created_by FROM auditor")
+    assert row == {"email": "ext@firm.com", "created_by": admin}

@@ -57,6 +57,11 @@ ROUTES = [
     ("POST", "/it/teams"),
     ("PATCH", "/it/teams/{id}"),
     ("GET", "/it/positions"),
+    ("POST", "/it/auditors"),
+    ("GET", "/it/auditors"),
+    ("GET", "/it/auditors/{id}"),
+    ("PATCH", "/it/auditors/{id}/status"),
+    ("POST", "/it/auditors/{id}/reset-password"),
 ]
 
 
@@ -116,7 +121,7 @@ def call(method, resource, path=None, query=None, body=None, role="IT"):
 
 @pytest.mark.parametrize("method, resource", ROUTES)
 def test_every_route_requires_it_role(caller, db, cognito, method, resource):
-    """All 11 routes refuse a manager acting as MANAGER, before any SQL
+    """All 16 routes refuse a manager acting as MANAGER, before any SQL
     or Cognito call is made."""
     caller["role"] = "MANAGER"
     status, _ = call(method, resource, role="MANAGER", path={"id": "42"})

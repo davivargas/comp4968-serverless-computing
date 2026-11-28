@@ -6,6 +6,8 @@ export interface Portal {
   name: string
   description: string
   path: string // where the user lands after signing in
+  /** Left off the landing page's portal cards (reached from a footer link instead). */
+  unlisted?: boolean
 }
 
 export const PORTALS: Portal[] = [
@@ -13,4 +15,5 @@ export const PORTALS: Portal[] = [
   { id: 'manager', role: 'MANAGER', name: 'Manager', description: 'Review and approve team timesheets and manage projects.', path: '/manager' },
   { id: 'payroll', role: 'PAYROLL_ADMIN', name: 'Payroll Admin', description: 'Manage employee records and release payroll.', path: '/payroll' },
   { id: 'it', role: 'IT', name: 'IT Admin', description: 'Manage user accounts, roles and system access.', path: '/it' },
+  { id: 'auditor', role: 'AUDITOR', name: 'Auditor', description: 'Review the audit trail of changes to payroll records.', path: '/auditor', unlisted: true },
 ]

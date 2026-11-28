@@ -13,6 +13,7 @@ Approach: the one database lookup (auth.one) is replaced with a fake
 that returns a chosen employee row, so the rules run without Postgres.
 """
 
+ZED = {"auditor_id": 4, "status": "ACTIVE", "first_name": "Zed", "last_name": "Quinn"}
 MEI = {"employee_id": 7, "status": "ACTIVE", "first_name": "Mei",
        "last_name": "Ross", "team_id": 2, "role": "MANAGER"}
 
@@ -20,11 +21,11 @@ MEI = {"employee_id": 7, "status": "ACTIVE", "first_name": "Mei",
 @pytest.fixture
 def lookup(monkeypatch):
     """Fakes the employee lookup; set lookup.row (None = no record)."""
-    state = types.SimpleNamespace(row=dict(MEI), params=None)
+    state = types.SimpleNamespace(row=dict(MEI), auditor_row=None, params=None)
 
     def fake_one(conn, sql, params):
         state.params = params
-        return state.row
+        return state.auditor_row if "FROM auditor" in sql else state.row
 
     monkeypatch.setattr(auth, "get_conn", lambda: None)
     monkeypatch.setattr(auth, "one", fake_one)
@@ -147,3 +148,70 @@ def test_assert_self_allows_only_own_records():
     with pytest.raises(HttpError, match="your own records") as err:
         assert_self(ctx, 8)
     assert err.value.status == 403
+
+
+# ---- auditors --------------------------------------------------------
+
+@pytest.fixture
+def zed(lookup):
+    """The signed-in user is an auditor: no employee row, one auditor row."""
+    lookup.row, lookup.auditor_row = None, dict(ZED)
+    return lookup
+
+
+def test_auditor_is_found_when_no_employee_has_the_sub(zed):
+    """With no employee row the auditor table is tried, by the same
+    Cognito sub. The only role is AUDITOR and there is no employee id."""
+    ctx = authenticate(event())
+    assert zed.params == ("sub-mei",)
+    assert ctx == {"employee_id": None, "auditor_id": 4, "first_name": "Zed", "last_name": "Quinn",
+                   "name": "Zed Quinn", "role": "AUDITOR", "team_id": None,
+                   "available": ["AUDITOR"], "active_role": "AUDITOR"}
+
+
+def test_auditor_may_name_their_role_but_no_other(zed):
+    """X-Active-Role: AUDITOR is accepted (any case); every other role
+    is a 403."""
+    assert authenticate(event(headers={"X-Active-Role": "auditor"}))["active_role"] == "AUDITOR"
+    for role in ("EMPLOYEE", "IT", "MANAGER", "PAYROLL_ADMIN", "NOPE"):
+        with pytest.raises(HttpError, match="do not hold") as err:
+            authenticate(event(headers={"X-Active-Role": role}))
+        assert err.value.status == 403
+
+
+def test_deactivated_auditor_is_403(zed):
+    """A deactivated auditor is blocked even with a valid Cognito token."""
+    zed.auditor_row["status"] = "DEACTIVATED"
+    with pytest.raises(HttpError, match="deactivated") as err:
+        authenticate(event())
+    assert err.value.status == 403
+
+
+def test_employee_is_never_looked_up_as_an_auditor(lookup):
+    """Employees are found in the employee table; their ctx has no
+    auditor id."""
+    ctx = authenticate(event())
+    assert ctx["auditor_id"] is None and ctx["employee_id"] == 7
+
+
+def test_login_in_neither_table_is_403(lookup):
+    """No employee and no auditor is the old 'No employee record'."""
+    lookup.row = None
+    with pytest.raises(HttpError, match="No employee record"):
+        authenticate(event())
+
+
+@pytest.mark.parametrize("roles, allowed", [
+    (["AUDITOR"], True), (["IT", "PAYROLL_ADMIN", "AUDITOR"], True), (None, True),
+    (["IT"], False), (["EMPLOYEE"], False), ([], False),
+])
+def test_auditor_only_reaches_routes_that_list_auditor(zed, roles, allowed):
+    """A route must name AUDITOR to let an auditor in (None is the /me
+    route, open to every signed-in user; an empty list is 'any employee')."""
+    handler = with_auth(roles, lambda ev, ctx: ctx["name"])
+    if allowed:
+        assert handler(event()) == "Zed Quinn"
+    else:
+        with pytest.raises(HttpError, match="only use the audit log") as err:
+            handler(event())
+        assert err.value.status == 403

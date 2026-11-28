@@ -1,0 +1,130 @@
+# Checks the frontend on every push and pull request that touches frontend/.
+# On a push to main it deploys the TimelyWeb stack (frontend/infra/template.yaml: S3 bucket + CloudFront),
+# builds the app against the backend's Timely stack and publishes it there.
+# It also runs after each successful backend deploy, since that can change the Cognito/API settings the build reads.
+#
+# Nothing here is secret: the build settings (API URL, Cognito pool and client IDs) end up in the public
+# JavaScript anyway, so they are read from the stack's outputs at build time instead of being stored.
+name: Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_run:
+    workflows: [Backend]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  STACK_NAME: Timely # backend: API, Cognito
+  WEB_STACK_NAME: TimelyWeb # frontend hosting: bucket, CloudFront
+  AWS_REGION: us-west-2
+
+jobs:
+  check:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pipx run cfn-lint infra/template.yaml
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:ui # component tests (vitest, tests/**/*.test.tsx)
+      - run: npm run test:ui:types # type-checks the tests themselves
+      - run: npm run test:manager # manager workflow checks against the mock API
+      - run: npm run build # type-checks the app too (tsc -b); uses the in-browser mocks since no API URL is set
+
+  deploy:
+    needs: check
+    # needs: check is skipped for workflow_run, so allow a skipped check there (but only after a backend success).
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.check.result == 'success'))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-frontend
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::477223649878:role/GitHubDeploy-Timely
+          aws-region: ${{ env.AWS_REGION }}
+
+      # CloudFront forwards /prod/* to the backend's API Gateway, so the hosting stack needs the API's ID:
+      # the host part of the backend's ApiUrl output (https://<id>.execute-api.<region>.amazonaws.com/prod).
+      - name: Deploy the hosting stack
+        run: |
+          api_url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          api_id=$(echo "$api_url" | sed -n 's|^https://\([a-z0-9]*\)\.execute-api\..*|\1|p')
+          if [ -z "$api_id" ]; then
+            echo "::error::Could not read the API ID from the $STACK_NAME stack's ApiUrl output ('$api_url'). Deploy the backend first."
+            exit 1
+          fi
+          aws cloudformation deploy --template-file infra/template.yaml --stack-name "$WEB_STACK_NAME" \
+            --parameter-overrides "ApiId=$api_id" --no-fail-on-empty-changeset
+
+      - name: Read build settings from the stack outputs
+        run: |
+          out() {
+            aws cloudformation describe-stacks --stack-name "$1" \
+              --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text
+          }
+          {
+            echo "WEB_BUCKET=$(out "$WEB_STACK_NAME" WebBucketName)"
+            echo "WEB_DISTRIBUTION_ID=$(out "$WEB_STACK_NAME" WebDistributionId)"
+            echo "WEBSITE_URL=$(out "$WEB_STACK_NAME" WebsiteUrl)"
+            echo "VITE_API_BASE_URL=$(out "$WEB_STACK_NAME" WebApiUrl)"
+            echo "VITE_COGNITO_USER_POOL_ID=$(out "$STACK_NAME" UserPoolId)"
+            echo "VITE_COGNITO_CLIENT_ID=$(out "$STACK_NAME" UserPoolClientId)"
+          } >> "$GITHUB_ENV"
+
+      - run: npm ci
+      - run: npm run build
+
+      # Hashed files under assets/ never change, so browsers may keep them for a year. index.html must
+      # always be re-checked, or visitors would keep loading the previous build's asset names.
+      - name: Upload to S3
+        run: |
+          aws s3 sync dist/assets "s3://$WEB_BUCKET/assets" --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync dist "s3://$WEB_BUCKET" --exclude "assets/*" --exclude index.html --cache-control "public,max-age=300"
+          aws s3 cp dist/index.html "s3://$WEB_BUCKET/index.html" --cache-control "no-cache"
+          aws s3 sync dist "s3://$WEB_BUCKET" --delete
+
+      - name: Refresh CloudFront
+        run: |
+          aws cloudfront create-invalidation --distribution-id "$WEB_DISTRIBUTION_ID" --paths "/*" \
+            --query "Invalidation.Id" --output text
+          echo "### Deployed to $WEBSITE_URL" >> "$GITHUB_STEP_SUMMARY"

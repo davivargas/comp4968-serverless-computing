@@ -1,4 +1,4 @@
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, ShieldCheck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Mascot from '@/components/Mascot'
 import { ModeToggle } from '@/components/mode-toggle'
@@ -16,7 +16,7 @@ export default function LandingPage() {
         <h1 className="text-4xl font-semibold tracking-tight">Sign in to your portal</h1>
         <p className="mt-2 text-muted-foreground">Choose the portal that matches your role.</p>
         <div className="mt-10 grid auto-rows-fr gap-5 sm:grid-cols-2">
-          {PORTALS.map((p) => (
+          {PORTALS.filter((p) => !p.unlisted).map((p) => (
             <Link key={p.id} to={`/login/${p.id}`}
               className="group flex min-h-48 flex-col justify-between rounded-xl border bg-card p-7 shadow-xs transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
               <div>
@@ -31,6 +31,12 @@ export default function LandingPage() {
           ))}
         </div>
       </main>
+      <footer className="mx-auto flex w-full max-w-4xl justify-end px-6 pb-6">
+        <Link to="/login/auditor"
+          className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          <ShieldCheck className="size-3.5" />External auditor sign-in
+        </Link>
+      </footer>
     </div>
   )
 }

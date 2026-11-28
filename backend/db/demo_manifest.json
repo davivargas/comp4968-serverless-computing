@@ -73,5 +73,12 @@
   "Payroll Analyst",
   "Payroll Specialist"
  ],
+ "auditors": [
+  {
+   "email": "auditor@test.com",
+   "firstName": "Noor",
+   "lastName": "Ali"
+  }
+ ],
  "release_before": "2026-10-11"
 }

@@ -152,6 +152,19 @@ def _delete_users(pool, emails):
             print("Cognito cleanup failed", email, e)
 
 
+def _create_login(pool, email, first, last, password, created):
+    try:
+        out = cognito().admin_create_user(
+            UserPoolId=pool, Username=email, MessageAction="SUPPRESS",
+            UserAttributes=[{"Name": "email", "Value": email}, {"Name": "email_verified", "Value": "true"},
+                            {"Name": "given_name", "Value": first}, {"Name": "family_name", "Value": last}])
+    except cognito().exceptions.UsernameExistsException:
+        raise _Abort(f"{email} already exists in the user pool. Delete it there first; nothing was changed.")
+    created.append(email)
+    cognito().admin_set_user_password(UserPoolId=pool, Username=email, Password=password, Permanent=True)
+    return next(a["Value"] for a in out["User"]["Attributes"] if a["Name"] == "sub")
+
+
 def _load_timesheet_csv(cur):
     rows = []
     with open(_here("demo_timesheets.csv"), encoding="utf-8", newline="") as f:
@@ -182,12 +195,12 @@ def load_demo(event):
     conn = get_conn()
     if not _exists(conn, "employee"):
         return {"ok": False, "message": "Load the schema first (action: schema)."}
-    ready = _exists(conn, "stat_holiday") and _column_exists(conn, "project", "special_type")
+    ready = _exists(conn, "stat_holiday") and _exists(conn, "auditor") and _column_exists(conn, "project", "special_type")
     if ready:
         ready = one(conn, "SELECT count(*)::int AS n FROM project WHERE special_type IS NOT NULL")["n"] == len(SPECIAL_PROJECTS)
     if not ready:
         conn.rollback()
-        return {"ok": False, "message": "The database is missing the sick/vacation/misc projects or the stat holiday table. Load the schema and create the first admin first."}
+        return {"ok": False, "message": "The database is missing the sick/vacation/misc projects, the stat holiday table or the auditor table. Load the schema (or run migrate) and create the first admin first."}
     if not one(conn, "SELECT 1 AS x FROM employee LIMIT 1"):
         conn.rollback()
         return {"ok": False, "message": "Create the first admin first (action: seed)."}
@@ -220,17 +233,13 @@ def load_demo(event):
         cur.execute("SELECT employee_id, email, first_name, last_name FROM employee WHERE employee_id > %s ORDER BY employee_id", (last_employee,))
         people = cur.fetchall()
         for employee_id, email, first, last in people:
-            try:
-                out = cognito().admin_create_user(
-                    UserPoolId=pool, Username=email, MessageAction="SUPPRESS",
-                    UserAttributes=[{"Name": "email", "Value": email}, {"Name": "email_verified", "Value": "true"},
-                                    {"Name": "given_name", "Value": first}, {"Name": "family_name", "Value": last}])
-            except cognito().exceptions.UsernameExistsException:
-                raise _Abort(f"{email} already exists in the user pool. Delete it there first; nothing was changed.")
-            created.append(email)
-            cognito().admin_set_user_password(UserPoolId=pool, Username=email, Password=password, Permanent=True)
-            sub = next(a["Value"] for a in out["User"]["Attributes"] if a["Name"] == "sub")
+            sub = _create_login(pool, email, first, last, password, created)
             cur.execute("UPDATE employee SET cognito_sub = %s WHERE employee_id = %s", (sub, employee_id))
+        for auditor in manifest["auditors"]:
+            sub = _create_login(pool, auditor["email"], auditor["firstName"], auditor["lastName"], password, created)
+            cur.execute("""INSERT INTO auditor (cognito_sub, first_name, last_name, email, created_by)
+                           VALUES (%s, %s, %s, %s, (SELECT min(employee_id) FROM employee))""",
+                        (sub, auditor["firstName"], auditor["lastName"], auditor["email"]))
         cur.close()
         pr.ensure_periods(conn, pr.today_bc())
         releaser = one(conn, "SELECT employee_id, first_name || ' ' || last_name AS name FROM employee WHERE role_id = 2 AND employee_id > %s ORDER BY employee_id LIMIT 1", (last_employee,))
@@ -302,6 +311,9 @@ def reset_demo(event):
         cur.execute("""DELETE FROM project_assignment WHERE employee_id = ANY(%s)
                           OR project_id IN (SELECT project_id FROM project WHERE project_code = ANY(%s) AND special_type IS NULL)""",
                     (ids, manifest["project_codes"]))
+        cur.execute("DELETE FROM auditor WHERE email = ANY(%s)", ([a["email"] for a in manifest["auditors"]],))
+        cur.execute("""UPDATE auditor SET created_by = (SELECT min(employee_id) FROM employee WHERE NOT employee_id = ANY(%s))
+                        WHERE created_by = ANY(%s)""", (ids, ids))
         cur.execute("DELETE FROM direct_deposit WHERE employee_id = ANY(%s)", (ids,))
         cur.execute("DELETE FROM project WHERE project_code = ANY(%s) AND special_type IS NULL", (manifest["project_codes"],))
         cur.execute("DELETE FROM employee WHERE employee_id = ANY(%s) AND team_id IS NOT NULL", (ids,))
@@ -317,7 +329,7 @@ def reset_demo(event):
         raise
     finally:
         cur.close()
-    _delete_users(os.environ["USER_POOL_ID"], manifest["emails"])
+    _delete_users(os.environ["USER_POOL_ID"], manifest["emails"] + [a["email"] for a in manifest["auditors"]])
     return {"ok": True, "message": "Demo data removed.", **preview}
 
 
